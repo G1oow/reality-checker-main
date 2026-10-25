@@ -1,0 +1,10 @@
+# 运行产物
+data/*.db
+data/*.db-shm
+data/*.db-wal
+all.json
+result*.json
+
+# 系统杂项
+.DS_Store
+Thumbs.db

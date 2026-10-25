@@ -1,0 +1,7 @@
+* text=auto
+
+*.exe binary
+reality-checker-main binary
+data/*.mmdb binary
+install.sh text eol=lf
+install.ps1 text eol=crlf
