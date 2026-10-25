@@ -10,6 +10,8 @@
 
 ## 一键指令
 
+装完会自动探测本机出口 IP：检测到双栈时会让你选 IPv4 还是 IPv6，选完回车即可开始扫描。
+
 ### Linux（VPS / Debian / Ubuntu）
 
 ```bash
@@ -51,9 +53,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $env:REF='main'; irm
 1. 下载对应平台的主程序（`reality-checker-main` / `reality-checker-main.exe`）；
 2. 解除执行限制（Linux `chmod +x`，Windows `Unblock-File`）；
 3. 拉取 `config.yaml` 与 `data/` 下的离线规则库（国家 IP 库、GFW 列表、CDN 特征、热门站点特征、排除规则）；
-4. 打印后续运行命令。
+4. 自动探测本机出口 IP：只有 IPv4 或只有 IPv6 就直接采用；**双栈时让你选 1) IPv4 / 2) IPv6**（选 IPv6 会附加 `-6`）；都探测不到则提示手动输入；
+5. 打印完整运行命令，问一句「现在开始扫描？」，回车即开始（默认不跑）。
 
-全程只往指定目录写文件，不改动系统配置。
+全程只往指定目录写文件，不改动系统配置。全自动场景（无终端、`curl | bash` 到 CI）会自动降级为默认值，不会卡住。
+
+> 探测走 `api4.ipify.org` / `api6.ipify.org`，失败时回退 `icanhazip.com`。入口 IP 只用于反查 ASN 网段，不会外传。
 
 ---
 
