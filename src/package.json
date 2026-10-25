@@ -1,0 +1,24 @@
+{
+  "name": "reality-checker-docs",
+  "version": "1.0.0",
+  "description": "RealityChecker 官方与架构开发文档",
+  "private": true,
+  "scripts": {
+    "web:dev": "pnpm --dir web dev",
+    "web:build": "pnpm --dir web build",
+    "docs:dev": "vitepress dev doc",
+    "docs:build": "vitepress build doc",
+    "docs:preview": "vitepress preview doc"
+  },
+  "devDependencies": {
+    "@braintree/sanitize-url": "^7.1.2",
+    "cytoscape": "^3.34.3",
+    "cytoscape-cose-bilkent": "^4.1.0",
+    "dayjs": "^1.11.23",
+    "debug": "^4.4.3",
+    "mermaid": "^12.0.0",
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-mermaid": "^2.0.17",
+    "vue": "^3.5.43"
+  }
+}

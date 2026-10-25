@@ -1,0 +1,35 @@
+reality-checker
+reality-checker.exe
+*.exe
+PROJECT_STATUS.md
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.log
+*.swp
+*.swo
+*~
+*.db
+*.db-shm
+*.db-wal
+
+# Go相关
+vendor/
+*.test
+*.prof
+dist/
+
+# Node & VitePress
+node_modules/
+web/node_modules/
+web/dist/
+.vitepress/dist/
+.vitepress/cache/
+doc/.vitepress/dist/
+doc/.vitepress/cache/
+
+

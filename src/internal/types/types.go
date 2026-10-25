@@ -1,0 +1,705 @@
+package types
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// DetectionResult 检测结果
+type DetectionResult struct {
+	Domain              string        `json:"domain"`
+	Index               int           `json:"index"`
+	StartTime           time.Time     `json:"start_time"`
+	Duration            time.Duration `json:"duration"`
+	Suitable            bool          `json:"suitable"`
+	Error               error         `json:"error,omitempty"`
+	HardRequirementsMet bool          `json:"hard_requirements_met"`
+	EarlyExit           bool          `json:"early_exit"`                     // 是否早期退出
+	StatusCodeCategory  string        `json:"status_code_category,omitempty"` // 状态码分类
+
+	// 检测结果
+	Network     *NetworkResult     `json:"network,omitempty"`
+	TLS         *TLSResult         `json:"tls,omitempty"`
+	Certificate *CertificateResult `json:"certificate,omitempty"`
+	SNI         *SNIResult         `json:"sni,omitempty"`
+	CDN         *CDNResult         `json:"cdn,omitempty"`
+	PageStatus  *PageStatusResult  `json:"page_status,omitempty"`
+	Blocked     *BlockedResult     `json:"blocked,omitempty"`
+	Location    *LocationResult    `json:"location,omitempty"`
+	Summary     *DetectionSummary  `json:"summary,omitempty"`
+}
+
+// StatusCodeCategory 状态码分类常量
+const (
+	StatusCodeCategorySafe     = "safe"     // 安全状态码：200, 301, 302
+	StatusCodeCategoryExcluded = "excluded" // 排除状态码：404, 401, 403, 407, 408, 429, 5xx
+	StatusCodeCategoryNetwork  = "network"  // 网络不可达
+)
+
+// ClassifyStatusCode 分类状态码
+func ClassifyStatusCode(statusCode int, accessible bool) string {
+	if !accessible {
+		return StatusCodeCategoryNetwork
+	}
+
+	// 安全的状态码
+	switch statusCode {
+	case 200, 301, 302:
+		return StatusCodeCategorySafe
+	}
+
+	// 排除的状态码
+	switch statusCode {
+	case 401, 403, 407, 408, 429:
+		return StatusCodeCategoryExcluded
+	}
+
+	// 5xx 系列
+	if statusCode >= 500 && statusCode < 600 {
+		return StatusCodeCategoryExcluded
+	}
+
+	// 其他状态码也归类为排除
+	return StatusCodeCategoryExcluded
+}
+
+// IsStatusCodeSafe 检查状态码是否安全
+func IsStatusCodeSafe(statusCode int) bool {
+	return ClassifyStatusCode(statusCode, true) == StatusCodeCategorySafe
+}
+
+// IsStatusCodeExcluded 检查状态码是否应该排除
+func IsStatusCodeExcluded(statusCode int) bool {
+	return ClassifyStatusCode(statusCode, true) == StatusCodeCategoryExcluded
+}
+
+// NetworkResult 网络检测结果
+type NetworkResult struct {
+	Accessible         bool              `json:"accessible"`
+	ResponseTime       time.Duration     `json:"response_time"`
+	StatusCode         int               `json:"status_code"`
+	FinalDomain        string            `json:"final_domain"`
+	RedirectChain      []string          `json:"redirect_chain"`
+	IsRedirected       bool              `json:"is_redirected"`
+	RedirectCount      int               `json:"redirect_count"`
+	URL                string            `json:"url"`
+	HandshakeTime      time.Duration     `json:"handshake_time"`
+	Headers            map[string]string `json:"headers,omitempty"`             // HTTP响应头
+	CertificateIssuer  string            `json:"certificate_issuer,omitempty"`  // 证书颁发者
+	CertificateSubject string            `json:"certificate_subject,omitempty"` // 证书主题
+	IsDefaultPage      bool              `json:"is_default_page,omitempty"`      // 是否为默认返回页（如nginx默认欢迎页）
+	DefaultPageType    string            `json:"default_page_type,omitempty"`    // 默认页类型（如"nginx", "apache"）
+	DefaultPageReason  string            `json:"default_page_reason,omitempty"`  // 默认页判定原因
+	PageTitle          string            `json:"page_title,omitempty"`           // 页面Title
+	ServerHeader       string            `json:"server_header,omitempty"`        // Web服务器Header
+}
+
+// TLSResult TLS检测结果
+type TLSResult struct {
+	ProtocolVersion string        `json:"protocol_version"`
+	SupportsTLS13   bool          `json:"supports_tls13"`
+	SupportsX25519  bool          `json:"supports_x25519"`
+	SupportsHTTP2   bool          `json:"supports_http2"`
+	CipherSuite     string        `json:"cipher_suite"`
+	HandshakeTime   time.Duration `json:"handshake_time"`
+}
+
+// CertificateResult 证书检测结果
+type CertificateResult struct {
+	Valid           bool      `json:"valid"`
+	Issuer          string    `json:"issuer"`
+	Subject         string    `json:"subject"`
+	DaysUntilExpiry int       `json:"days_until_expiry"`
+	CertificateSANs []string  `json:"certificate_sans"`
+	NotBefore       time.Time `json:"not_before"`
+	NotAfter        time.Time `json:"not_after"`
+	Error           string    `json:"error,omitempty"`
+}
+
+// SNIResult SNI检测结果
+type SNIResult struct {
+	SupportsSNI bool   `json:"supports_sni"`
+	SNIMatch    bool   `json:"sni_match"`
+	ServerName  string `json:"server_name"`
+}
+
+// CDNResult CDN检测结果
+type CDNResult struct {
+	IsCDN        bool   `json:"is_cdn"`
+	CDNProvider  string `json:"cdn_provider"`
+	Confidence   string `json:"confidence"`
+	Evidence     string `json:"evidence"`
+	IsHotWebsite bool   `json:"is_hot_website"`
+	Error        error  `json:"error,omitempty"`
+}
+
+// BlockedResult 被墙检测结果
+type BlockedResult struct {
+	IsBlocked      bool     `json:"is_blocked"`
+	BlockedReasons []string `json:"blocked_reasons"`
+	MatchType      string   `json:"match_type"`
+}
+
+// PageStatusResult 页面状态检测结果
+type PageStatusResult struct {
+	StatusCode   int    `json:"status_code"`
+	IsAccessible bool   `json:"is_accessible"`
+	ResponseTime int64  `json:"response_time_ms"`
+	Error        string `json:"error,omitempty"`
+}
+
+// LocationResult 地理位置检测结果
+type LocationResult struct {
+	Country    string `json:"country"`
+	IsDomestic bool   `json:"is_domestic"`
+	IPAddress  string `json:"ip_address"`
+	ISP        string `json:"isp"`
+	ASN        string `json:"asn"`
+	City       string `json:"city"`
+	Region     string `json:"region"`
+}
+
+// DetectionSummary 检测摘要
+type DetectionSummary struct {
+	TotalChecks     int      `json:"total_checks"`
+	PassedChecks    int      `json:"passed_checks"`
+	FailedChecks    int      `json:"failed_checks"`
+	Warnings        []string `json:"warnings"`
+	Recommendations []string `json:"recommendations"`
+}
+
+// BatchReport 批量检测报告
+type BatchReport struct {
+	StartTime        time.Time          `json:"start_time"`
+	EndTime          time.Time          `json:"end_time"`
+	TotalDuration    time.Duration      `json:"total_duration"`
+	Results          []*DetectionResult `json:"results"`
+	Statistics       *Statistics        `json:"statistics"`
+	PerformanceStats *PerformanceStats  `json:"performance_stats"`
+	CDNStats         *CDNStats          `json:"cdn_stats"`
+	GeographicStats  *GeographicStats   `json:"geographic_stats"`
+	TLSStats         *TLSStats          `json:"tls_stats"`
+	CertificateStats *CertificateStats  `json:"certificate_stats"`
+	Summary          *BatchSummary      `json:"summary"`
+}
+
+// Statistics 统计信息
+type Statistics struct {
+	TotalDomains     int `json:"total_domains"`
+	SuccessfulChecks int `json:"successful_checks"`
+	FailedChecks     int `json:"failed_checks"`
+	SuitableDomains  int `json:"suitable_domains"`
+	BlockedDomains   int `json:"blocked_domains"`
+	ErrorDomains     int `json:"error_domains"`
+}
+
+// PerformanceStats 性能统计
+type PerformanceStats struct {
+	TotalTime        time.Duration `json:"total_time"`
+	AverageTime      time.Duration `json:"average_time"`
+	MinTime          time.Duration `json:"min_time"`
+	MaxTime          time.Duration `json:"max_time"`
+	AverageHandshake time.Duration `json:"average_handshake"`
+}
+
+// CDNStats CDN统计
+type CDNStats struct {
+	CDNDomains       int            `json:"cdn_domains"`
+	CDNProviders     map[string]int `json:"cdn_providers"`
+	CDNTypes         map[string]int `json:"cdn_types"`
+	ConfidenceLevels map[string]int `json:"confidence_levels"`
+}
+
+// GeographicStats 地理统计
+type GeographicStats struct {
+	Countries     map[string]int `json:"countries"`
+	DomesticCount int            `json:"domestic_count"`
+	ForeignCount  int            `json:"foreign_count"`
+}
+
+// TLSStats TLS统计
+type TLSStats struct {
+	TLS13Support     int           `json:"tls13_support"`
+	X25519Support    int           `json:"x25519_support"`
+	HTTP2Support     int           `json:"http2_support"`
+	AverageHandshake time.Duration `json:"average_handshake"`
+}
+
+// CertificateStats 证书统计
+type CertificateStats struct {
+	ValidCertificates   int `json:"valid_certificates"`
+	InvalidCertificates int `json:"invalid_certificates"`
+	ExpiringSoon        int `json:"expiring_soon"`
+	AverageExpiry       int `json:"average_expiry"`
+}
+
+// BatchSummary 批量检测摘要
+type BatchSummary struct {
+	SuccessRate     float64  `json:"success_rate"`
+	SuitabilityRate float64  `json:"suitability_rate"`
+	BlockingRate    float64  `json:"blocking_rate"`
+	CDNUsageRate    float64  `json:"cdn_usage_rate"`
+	Recommendations []string `json:"recommendations"`
+	Warnings        []string `json:"warnings"`
+}
+
+// DetectionStage 检测阶段接口
+type DetectionStage interface {
+	Execute(ctx *PipelineContext) error
+	CanEarlyExit() bool
+	Priority() int
+	Name() string
+}
+
+// PipelineContext 流水线上下文
+type PipelineContext struct {
+	Domain      string
+	StartTime   time.Time
+	Result      *DetectionResult
+	Connections interface{} // 使用interface{}来支持不同的连接管理器类型
+	Cache       interface{} // 使用interface{}来支持不同的缓存管理器类型
+	Config      *Config
+	EarlyExit   bool
+	Error       error
+	Context     context.Context // 添加Context字段
+}
+
+// ConnectionManager 连接管理器
+type ConnectionManager struct {
+	HTTPClient  *HTTPClient
+	TLSClient   *TLSClient
+	DNSResolver *DNSResolver
+}
+
+// CacheManager 缓存管理器
+type CacheManager struct {
+	DNSCache    *DNSCache
+	ResultCache *ResultCache
+	CDNCache    *CDNCache
+}
+
+// HTTPClient HTTP客户端
+type HTTPClient struct {
+	Client    interface{} // *http.Client
+	Transport interface{} // *http.Transport
+}
+
+// TLSClient TLS客户端
+type TLSClient struct {
+	Config *TLSConfig
+	Conn   interface{} // *tls.Conn
+}
+
+// DNSResolver DNS解析器
+type DNSResolver struct {
+	Cache map[string]*DNSEntry
+	TTL   time.Duration
+}
+
+// DNSEntry DNS条目
+type DNSEntry struct {
+	IP        string
+	Timestamp time.Time
+	TTL       time.Duration
+}
+
+// DNSCache DNS缓存
+type DNSCache struct {
+	Cache map[string]*DNSEntry
+	TTL   time.Duration
+}
+
+// ResultCache 结果缓存
+type ResultCache struct {
+	Cache map[string]*CachedResult
+	TTL   time.Duration
+}
+
+// CachedResult 缓存结果
+type CachedResult struct {
+	Result    *DetectionResult
+	Timestamp time.Time
+}
+
+// CDNCache CDN缓存
+type CDNCache struct {
+	Cache map[string]*CDNResult
+	TTL   time.Duration
+}
+
+// TLSConfig TLS配置
+type TLSConfig struct {
+	MinVersion   uint16
+	MaxVersion   uint16
+	CipherSuites []uint16
+	ServerName   string
+	NextProtos   []string
+}
+
+// FilterConfig REALITY 资产选型与查询过滤策略配置
+type FilterConfig struct {
+	// --- 网络与运行环境策略 ---
+	RequireNoCN          bool     `yaml:"require_no_cn"`          // 是否排除国内网站 (默认 true，翻回国内设为 false)
+	CheckGFW             bool     `yaml:"check_gfw"`              // 是否启用 GFW 静态黑名单 (本地直连建议 false)
+	IPv4Only             bool     `yaml:"ipv4_only"`              // 是否仅拉取与扫描 IPv4 网段 (默认 false)
+	IPv6Only             bool     `yaml:"ipv6_only"`              // 是否仅拉取与扫描 IPv6 网段 (默认 false)
+	UseCache             bool     `yaml:"use_cache"`              // 是否启用本地资产库缓存快速通道 (默认 true)
+	VerifyCache          bool     `yaml:"verify_cache"`           // 是否对本地缓存发起在线网络复核 (默认 false: 直接读取旧参数 0 延迟秒出; true: 在线复核)
+	CacheMaxDays         int      `yaml:"cache_max_days"`         // 资产缓存有效天数 (默认 7)
+	NoResume             bool     `yaml:"no_resume"`              // 是否禁用断点续传 (默认 false: 自动断点续传)
+	ScanThreads          int      `yaml:"scan_threads"`           // 网络扫描并发协程数 (默认 200)
+	ScanTimeout          int      `yaml:"scan_timeout"`           // 单 IP 探测超时秒数 (默认 3)
+	Verbose              bool     `yaml:"verbose"`                // 详细输出模式 (输出每一条扫描记录到 stdout)
+
+	// --- 阶段二/进阶偏好过滤策略 (主要用于查库、排序打分与智能推荐) ---
+	RequireNoCDN         bool     `yaml:"require_no_cdn"`         // 是否强制排除 CDN
+	MaxHandshakeMS       int64    `yaml:"max_handshake_ms"`       // 最大握手延迟上限 (ms)
+	RequireNoHot         bool     `yaml:"require_no_hot"`         // 是否排除超级热门大站
+	MinCertDays          int      `yaml:"min_cert_days"`          // 证书剩余天数下限
+	MinStars             int      `yaml:"min_stars"`              // 最低推荐星级 (1~5)
+	RequireNoDefaultPage bool     `yaml:"require_no_default_page"`// 是否排除 Nginx/Web 默认页
+	ExcludeRulesFile     string   `yaml:"exclude_rules_file"`     // 外部规则文件路径
+	IncludeSuffixes      []string `yaml:"include_suffixes"`       // 白名单后缀 (如 .com, .de)
+	ExcludeSuffixes      []string `yaml:"exclude_suffixes"`       // 黑名单后缀 (如 .xyz, .top)
+	ExcludeDomains       []string `yaml:"exclude_domains"`        // 排除域名
+	ExcludePatterns      []string `yaml:"exclude_patterns"`       // 排除特征模式
+	ExcludeStatus        []int    `yaml:"exclude_status"`         // 排除的 HTTP 状态码
+}
+
+// RealityFilterConfig 向后兼容类型别名
+type RealityFilterConfig = FilterConfig
+
+// TargetRecord REALITY 资产数据库记录
+type TargetRecord struct {
+	ASN             string    `json:"asn"`
+	Country         string    `json:"country"`
+	Domain          string    `json:"domain"`
+	IP              string    `json:"ip"`
+	Port            int       `json:"port"`
+	HandshakeMS     int64     `json:"handshake_ms"`
+	CertDays        int       `json:"cert_days"`
+	CertExpireAt    time.Time `json:"cert_expire_at,omitempty"` // 证书实际到期时间戳
+	Tags            []string  `json:"tags,omitempty"`           // 业务与风险标签 (例如 cert_renew_delayed)
+	StatusCode      int       `json:"status_code"`
+	PageTitle       string    `json:"page_title,omitempty"`
+	IsCDN           bool      `json:"is_cdn"`
+	IsHot           bool      `json:"is_hot"`
+	IsDefaultPage   bool      `json:"is_default_page"`
+	DefaultPageType string    `json:"default_page_type,omitempty"`
+	Stars           int       `json:"stars"`
+	IsActive        bool      `json:"is_active"`
+	CheckFailCount  int       `json:"check_fail_count"`
+	FirstSeenAt     time.Time `json:"first_seen_at"`
+	LastCheckedAt   time.Time `json:"last_checked_at"`
+}
+
+const (
+	// TagCertRenewDelayed 证书疑似未自动续期标签 (临近30天到期但未见更新)
+	TagCertRenewDelayed = "cert_renew_delayed"
+)
+
+// GetRemainingDays 获取证书当前剩余有效天数 (基于 CertExpireAt 动态计算)
+func (r *TargetRecord) GetRemainingDays() int {
+	if r == nil {
+		return 0
+	}
+	if !r.CertExpireAt.IsZero() {
+		days := int(time.Until(r.CertExpireAt).Hours() / 24)
+		if days < 0 {
+			return 0
+		}
+		return days
+	}
+	return r.CertDays
+}
+
+// HasTag 检查是否包含指定标签
+func (r *TargetRecord) HasTag(tag string) bool {
+	if r == nil || tag == "" {
+		return false
+	}
+	for _, t := range r.Tags {
+		if strings.EqualFold(t, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// AddTag 添加标签
+func (r *TargetRecord) AddTag(tag string) {
+	if r == nil || tag == "" || r.HasTag(tag) {
+		return
+	}
+	r.Tags = append(r.Tags, tag)
+}
+
+// RemoveTag 移除指定标签
+func (r *TargetRecord) RemoveTag(tag string) {
+	if r == nil || tag == "" {
+		return
+	}
+	var filtered []string
+	for _, t := range r.Tags {
+		if !strings.EqualFold(t, tag) {
+			filtered = append(filtered, t)
+		}
+	}
+	r.Tags = filtered
+}
+
+// ASNRecord 自治系统任务与元数据记录
+type ASNRecord struct {
+	ASN                int       `json:"asn"`
+	Name               string    `json:"name"`
+	Country            string    `json:"country"`
+	TotalIPs           int       `json:"total_ips"`
+	Priority           int       `json:"priority"`
+	ScanStatus         string    `json:"scan_status"` // pending, scanning, completed
+	LastScannedAt      time.Time `json:"last_scanned_at,omitempty"`
+	SuccessTargetCount int       `json:"success_target_count"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// PatrolLogRecord 存量资产健康巡检日志记录
+type PatrolLogRecord struct {
+	ID          int64     `json:"id"`
+	Domain      string    `json:"domain"`
+	IP          string    `json:"ip"`
+	HandshakeMS int64     `json:"handshake_ms"`
+	IsSuccess   bool      `json:"is_success"`
+	ErrorMsg    string    `json:"error_msg,omitempty"`
+	CheckedAt   time.Time `json:"checked_at"`
+}
+
+
+// CandidatePool 候选资产池
+type CandidatePool struct {
+	CreatedAt time.Time          `json:"created_at"`
+	Source    string             `json:"source"`
+	Targets   []*DetectionResult `json:"targets"`
+}
+
+// LogConfig 日志配置
+type LogConfig struct {
+	Level string `yaml:"level"`
+	File  string `yaml:"file"`
+}
+
+// ProxyConfig 网络代理配置
+type ProxyConfig struct {
+	URL      string `yaml:"url" json:"url"`           // 代理服务器地址 (例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080)
+	Download bool   `yaml:"download" json:"download"` // 是否用于资源与外部数据下载 (GitHub 规则库、GeoIP 数据库、ASN 远程接口等)
+	Scanner  bool   `yaml:"scanner" json:"scanner"`   // 是否用于目标检测与网络扫描 (默认 false: 保持直连以获取真实延迟与探测结果)
+}
+
+// UnmarshalYAML 自定义反序列化，支持字符串简写 (proxy: "http://...") 与对象模式
+func (p *ProxyConfig) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		p.URL = strings.TrimSpace(value.Value)
+		p.Download = true
+		p.Scanner = false
+		return nil
+	}
+
+	type plain ProxyConfig
+	alias := plain{
+		Download: true,
+		Scanner:  false,
+	}
+	if err := value.Decode(&alias); err != nil {
+		return err
+	}
+	*p = ProxyConfig(alias)
+	p.URL = strings.TrimSpace(p.URL)
+	return nil
+}
+
+// Config 配置结构
+type Config struct {
+	LoadedConfigFile string              `yaml:"-"` // 实际加载生效的配置文件路径 (运行时状态)
+	Proxy            ProxyConfig         `yaml:"proxy"`
+	Network          NetworkConfig       `yaml:"network"`
+	TLS              TLSConfig           `yaml:"tls"`
+	Concurrency      ConcurrencyConfig   `yaml:"concurrency"`
+	Output           OutputConfig        `yaml:"output"`
+	Cache            CacheConfig         `yaml:"cache"`
+	Batch            BatchConfig         `yaml:"batch"`
+	Filter           FilterConfig        `yaml:"filter"`
+	RealityFilter    FilterConfig        `yaml:"reality_filter,omitempty"` // 向后兼容旧配置键名
+	Log              LogConfig           `yaml:"log"`
+	Server           ServerConfig        `yaml:"server"`
+	Database         DatabaseConfig      `yaml:"database"`
+}
+
+// GetFilter 获取有效的选型与过滤策略配置（优先使用 Filter，若未设置则回退兼容 RealityFilter）
+func (c *Config) GetFilter() FilterConfig {
+	if c == nil {
+		return FilterConfig{}
+	}
+	f := c.Filter
+	if !f.RequireNoCDN && c.RealityFilter.RequireNoCDN {
+		f.RequireNoCDN = c.RealityFilter.RequireNoCDN
+	}
+	if !f.RequireNoCN && c.RealityFilter.RequireNoCN {
+		f.RequireNoCN = c.RealityFilter.RequireNoCN
+	}
+	if !f.CheckGFW && c.RealityFilter.CheckGFW {
+		f.CheckGFW = c.RealityFilter.CheckGFW
+	}
+	if !f.RequireNoHot && c.RealityFilter.RequireNoHot {
+		f.RequireNoHot = c.RealityFilter.RequireNoHot
+	}
+	if !f.RequireNoDefaultPage && c.RealityFilter.RequireNoDefaultPage {
+		f.RequireNoDefaultPage = c.RealityFilter.RequireNoDefaultPage
+	}
+	if f.MaxHandshakeMS == 0 && c.RealityFilter.MaxHandshakeMS > 0 {
+		f.MaxHandshakeMS = c.RealityFilter.MaxHandshakeMS
+	}
+	if f.MinCertDays == 0 && c.RealityFilter.MinCertDays > 0 {
+		f.MinCertDays = c.RealityFilter.MinCertDays
+	}
+	if f.MinStars == 0 && c.RealityFilter.MinStars > 0 {
+		f.MinStars = c.RealityFilter.MinStars
+	}
+	if f.ExcludeRulesFile == "" && c.RealityFilter.ExcludeRulesFile != "" {
+		f.ExcludeRulesFile = c.RealityFilter.ExcludeRulesFile
+	}
+	if len(f.ExcludeStatus) == 0 && len(c.RealityFilter.ExcludeStatus) > 0 {
+		f.ExcludeStatus = c.RealityFilter.ExcludeStatus
+	}
+	if len(f.IncludeSuffixes) == 0 && len(c.RealityFilter.IncludeSuffixes) > 0 {
+		f.IncludeSuffixes = c.RealityFilter.IncludeSuffixes
+	}
+	if len(f.ExcludeDomains) == 0 && len(c.RealityFilter.ExcludeDomains) > 0 {
+		f.ExcludeDomains = c.RealityFilter.ExcludeDomains
+	}
+	if len(f.ExcludeSuffixes) == 0 && len(c.RealityFilter.ExcludeSuffixes) > 0 {
+		f.ExcludeSuffixes = c.RealityFilter.ExcludeSuffixes
+	}
+	if len(f.ExcludePatterns) == 0 && len(c.RealityFilter.ExcludePatterns) > 0 {
+		f.ExcludePatterns = c.RealityFilter.ExcludePatterns
+	}
+	return f
+}
+
+// DatabaseConfig 数据库存储引擎配置
+type DatabaseConfig struct {
+	Driver   string         `yaml:"driver"` // "sqlite" (默认) 或 "postgres"
+	SQLite   SQLiteConfig   `yaml:"sqlite"`
+	Postgres PostgresConfig `yaml:"postgres"`
+}
+
+// SQLiteConfig SQLite 专用配置
+type SQLiteConfig struct {
+	Path        string `yaml:"path"`
+	BusyTimeout int    `yaml:"busy_timeout"`
+	JournalMode string `yaml:"journal_mode"`
+	Synchronous string `yaml:"synchronous"`
+}
+
+// PostgresConfig PostgreSQL 专用配置
+type PostgresConfig struct {
+	DSN             string        `yaml:"dsn"`
+	Host            string        `yaml:"host"`
+	Port            int           `yaml:"port"`
+	User            string        `yaml:"user"`
+	Password        string        `yaml:"password"`
+	DBName          string        `yaml:"dbname"`
+	SSLMode         string        `yaml:"sslmode"`
+	MaxConns        int           `yaml:"max_conns"`
+	MinConns        int           `yaml:"min_conns"`
+	MaxConnLifetime time.Duration `yaml:"max_conn_lifetime"`
+	MaxConnIdleTime time.Duration `yaml:"max_conn_idle_time"`
+}
+
+// ServerConfig HTTP 服务配置
+type ServerConfig struct {
+	APIToken string `yaml:"api_token"`
+}
+
+// NetworkConfig 网络配置
+type NetworkConfig struct {
+	Timeout    time.Duration `yaml:"timeout"`
+	Retries    int           `yaml:"retries"`
+	DNSServers []string      `yaml:"dns_servers"`
+	Proxy      string        `yaml:"proxy"` // 兼容 network.proxy 配置
+}
+
+// ConcurrencyConfig 并发配置
+type ConcurrencyConfig struct {
+	MaxConcurrent int           `yaml:"max_concurrent"`
+	CheckTimeout  time.Duration `yaml:"check_timeout"`
+	CacheTTL      time.Duration `yaml:"cache_ttl"`
+}
+
+// OutputConfig 输出配置
+type OutputConfig struct {
+	Color   bool   `yaml:"color"`
+	Verbose bool   `yaml:"verbose"`
+	Format  string `yaml:"format"`
+}
+
+// CacheConfig 缓存配置
+type CacheConfig struct {
+	DNSEnabled    bool          `yaml:"dns_enabled"`
+	ResultEnabled bool          `yaml:"result_enabled"`
+	TTL           time.Duration `yaml:"ttl"`
+	MaxSize       int           `yaml:"max_size"`
+}
+
+// BatchConfig 批量配置
+type BatchConfig struct {
+	StreamOutput bool          `yaml:"stream_output"`
+	ProgressBar  bool          `yaml:"progress_bar"`
+	ReportFormat string        `yaml:"report_format"`
+	Timeout      time.Duration `yaml:"timeout"`
+}
+
+// ConnectionStats 连接统计
+type ConnectionStats struct {
+	ActiveConnections int `json:"active_connections"`
+	TotalConnections  int `json:"total_connections"`
+	FailedConnections int `json:"failed_connections"`
+}
+
+// CacheStats 缓存统计
+type CacheStats struct {
+	DNSCacheSize    int     `json:"dns_cache_size"`
+	ResultCacheSize int     `json:"result_cache_size"`
+	CDNCacheSize    int     `json:"cdn_cache_size"`
+	HitRate         float64 `json:"hit_rate"`
+}
+
+// TargetQueryOptions 资产查询过滤条件
+type TargetQueryOptions struct {
+	Keyword              string `json:"keyword"`
+	ASN                  string `json:"asn"`
+	Country              string `json:"country"`
+	MinStars             int    `json:"min_stars"`
+	IsActive             *bool  `json:"is_active"`
+	RequireNoCDN         *bool  `json:"require_no_cdn"`          // 排除 CDN (true: is_cdn=0)
+	RequireNoHot         *bool  `json:"require_no_hot"`          // 排除超级大站 (true: is_hot=0)
+	RequireNoDefaultPage *bool  `json:"require_no_default_page"` // 排除默认返回页 (true: is_default_page=0)
+	MaxHandshakeMS       int64  `json:"max_handshake_ms"`        // 握手延迟上限 (ms)
+	MinCertDays          int    `json:"min_cert_days"`           // 证书剩余天数下限
+	ExcludeStatus        []int  `json:"exclude_status"`          // 排除的 HTTP 状态码
+	SortBy               string `json:"sort_by"`                 // "stars_desc", "handshake_asc", "recent_desc"
+	Page                 int    `json:"page"`
+	PageSize             int    `json:"page_size"`
+}
+
+// TargetStats 资产多维汇总统计
+type TargetStats struct {
+	TotalTargets    int            `json:"total_targets"`
+	ActiveTargets   int            `json:"active_targets"`
+	FiveStarTargets int            `json:"five_star_targets"`
+	TotalASNs       int            `json:"total_asns"`
+	AvgHandshakeMS  int64          `json:"avg_handshake_ms"`
+	CountryCounts   map[string]int `json:"country_counts"`
+	StarCounts      map[int]int    `json:"star_counts"`
+}
+

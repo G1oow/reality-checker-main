@@ -72,6 +72,26 @@ Windows 直接双击 `reality-checker-main.exe` 或按上面 PowerShell 命令�
 
 ---
 
+## 源码与自编译
+
+完整源码在 [`src/`](./src)，取自上游 [qualvey/one-reality](https://github.com/qualvey/one-reality) 的 main 分支 —— 即修复了 `v2.2.3` csv 解析 bug 与 `v1.1.2` 证书校验 bug 的那条分支。Go + React 双端。
+
+```bash
+cd src
+./build.sh          # Linux，产物输出到 src/dist/
+```
+
+```powershell
+cd src
+.\build.ps1         # Windows
+```
+
+构建脚本会自动校验（缺失则下载）`internal/data/assets/Country.mmdb` 用于内置 GeoIP，国内网络先在 `src/config.yaml` 配好 `proxy` 再构建。产物默认名为 `reality-checker`，需要与其他脚本对齐时用 `APP_NAME=reality-checker-main` 覆盖；改完源码把产物覆盖到仓库根目录即可。
+
+环境：Go 1.26+；前端在 `web/`，需 pnpm（`cd web && pnpm install && pnpm build`）。
+
+---
+
 ## 常用命令
 
 ```bash
@@ -133,6 +153,7 @@ cat file.csv | ./reality-checker-main pipe
 | `RealiTLScanner.exe` | 老版扫描器，程序已内置扫描能力 |
 | `install.sh` / `install.ps1` | 一键部署脚本 |
 | `Reality目标检测-小白教程.md` | 完整使用教程 |
+| `src/` | 完整源码（Go + React，含 build.sh / build.ps1） |
 
 ---
 
