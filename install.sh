@@ -28,7 +28,7 @@ done
 
 probe_ip() { # $1 = -4 / -6
   local flag="$1" out url
-  for url in "https://api${flag}.ipify.org" "https://ipv${flag#-}.icanhazip.com"; do
+  for url in "https://api${flag#-}.ipify.org" "https://ipv${flag#-}.icanhazip.com"; do
     out=$(curl "${flag}" -fsS --max-time 6 "${url}" 2>/dev/null | tr -d '[:space:]') || continue
     if [ -n "${out}" ]; then
       printf '%s' "${out}"
@@ -48,8 +48,8 @@ ask() {
 echo
 echo "[*] 部署完成: ${DIR}"
 echo "[*] 正在探测本机出口 IP ..."
-IP4=$(probe_ip api4.ipify.org || true)
-IP6=$(probe_ip api6.ipify.org || true)
+IP4=$(probe_ip -4 || true)
+IP6=$(probe_ip -6 || true)
 
 TARGET=""
 FAMILY_FLAG=""
