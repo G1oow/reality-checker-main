@@ -154,6 +154,7 @@ cat file.csv | ./reality-checker-main pipe
 | `install.sh` / `install.ps1` | 一键部署脚本 |
 | `Reality目标检测-小白教程.md` | 完整使用教程 |
 | `src/` | 完整源码（Go + React，含 build.sh / build.ps1） |
+| `VPS初始化一键工作流.md` | 新机开荒流水线（公钥/改端口/测速/调优/选目标） |
 
 ---
 
