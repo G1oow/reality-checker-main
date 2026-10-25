@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # vps-init.sh —— 新 VPS 初始化工作流（阶段化，可重复执行，幂等）
+# 目标系统：Debian 13（minimal）。Ubuntu 23.04+ 的 ssh.socket 会自动识别并走 socket 分支兜底。
 #
 # 用法：
 #   ./vps-init.sh 0            # SSH 加固：装公钥 + 改端口 + 防火墙放行（不改密码登录）
@@ -275,7 +276,7 @@ rollback() {
 }
 
 usage() {
-  sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main() {

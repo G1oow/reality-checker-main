@@ -88,7 +88,7 @@ cd src
 
 构建脚本会自动校验（缺失则下载）`internal/data/assets/Country.mmdb` 用于内置 GeoIP，国内网络先在 `src/config.yaml` 配好 `proxy` 再构建。产物默认名为 `reality-checker`，需要与其他脚本对齐时用 `APP_NAME=reality-checker-main` 覆盖；改完源码把产物覆盖到仓库根目录即可。
 
-环境：Go 1.26+；前端在 `web/`，需 pnpm（`cd web && pnpm install && pnpm build`）。
+**顺序要求**：`web/dist` 是 `go:embed` 的编译依赖，必须先构建前端再编译 Go，否则报 `pattern dist/*: no matching files found`。环境：Go 1.26+、pnpm。
 
 ---
 
