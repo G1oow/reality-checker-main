@@ -42,7 +42,7 @@ function Download-MMDB {
             $downloaded = $true
             break
         } catch {
-            Write-Warning "Failed to download Country.mmdb from $url: $_"
+            Write-Warning "Failed to download Country.mmdb from ${url}: $_"
             if (Test-Path $tmpFile) { Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue }
         }
     }
