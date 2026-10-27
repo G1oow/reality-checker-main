@@ -179,12 +179,12 @@ export const SmartFinder = () => {
     }
   };
 
-  // 快捷测试 IP 资产
+  // 快捷测试 IP 资产（示例网段，仅用于界面演示）
   const sampleIPs = [
-    { label: '东京 Vultr (AS20473)', ip: '198.51.100.10' },
-    { label: '新加坡 Linode (AS63949)', ip: '203.0.113.10' },
-    { label: '美国 Oracle (AS31898)', ip: '192.0.2.10' },
-    { label: '香港 GCP (AS396982)', ip: '198.51.100.20' },
+    { label: '示例 IPv4 A (RFC 5737)', ip: '198.51.100.10' },
+    { label: '示例 IPv4 B (RFC 5737)', ip: '203.0.113.10' },
+    { label: '示例 IPv4 C (RFC 5737)', ip: '192.0.2.10' },
+    { label: '示例 IPv6 (RFC 3849)', ip: '2001:db8::10' },
   ];
 
   // 前端过滤核心匹配函数 (纯函数，0 延迟即时评估)

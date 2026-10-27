@@ -1,7 +1,7 @@
 # 生产环境重大性能故障复盘：/api/targets/smart 接口永久卡死与 O(N²) 阻塞事件
 
 - **故障日期**：2026-10-24
-- **影响范围**：`/api/targets/smart` 智能推荐端点、后台 Web 控制台交互、Nanopi 宿主机 CPU/Load
+- **影响范围**：`/api/targets/smart` 智能推荐端点、后台 Web 控制台交互、边缘宿主机 CPU/Load
 - **故障等级**：P1（核心推荐服务瘫痪，宿主机 CPU 耗尽）
 - **修复状态**：已彻底解决并验证上线
 
@@ -12,12 +12,12 @@
 ### 1.1 业务表象
 调用智能推荐接口：
 ```http
-GET http://127.0.0.1:8881/api/targets/smart?ip=198.51.100.117&limit=12&min_stars=3&require_no_cn=1&token=<API_TOKEN>
+GET http://127.0.0.1:8881/api/targets/smart?ip=203.0.113.50&limit=12&min_stars=3&require_no_cn=1&token=<API_TOKEN>
 ```
 客户端长时间等待无响应，前端 Web 控制台进入无限 Loading 状态，最终 HTTP 连接超时中断。
 
 ### 1.2 宿主机第一现场排查指标
-通过 SSH 登入 ARM64 边缘网关设备（Nanopi，运行 Armbian 系统），采集系统指标：
+通过 SSH 登入 ARM64 边缘网关设备（单板盒子，运行 Armbian 系统），采集系统指标：
 ```bash
 $ ps aux | grep reasni
 root  8659  216% 15.1%  1765272  305044  ?  Ssl  10:45  27:22  /usr/local/bin/reasni daemon ...
@@ -74,7 +74,7 @@ for i := 0; i < len(ranked); i++ {
 针对上述三个致命瓶颈，重构方案遵循 **“数据库索引下推召回 + 物理截断候选池 + 工业级快排 + 窗口化并发懒探测”** 原则。
 
 ```
-[用户请求 IP: 198.51.100.117]
+[用户请求 IP: 203.0.113.50]
            │
            ▼
 ┌────────────────────────────────────────────────────────┐

@@ -132,9 +132,9 @@ func TestTargetStore_Checkpoints(t *testing.T) {
 	}
 
 	// Record partially completed CIDR with LastIP
-	_ = store.RecordCheckpoint(taskKey, "198.51.100.0/17", "198.51.100.60", false)
+	_ = store.RecordCheckpoint(taskKey, "198.51.100.0/24", "198.51.100.60", false)
 	// Record fully completed CIDR
-	_ = store.RecordCheckpoint(taskKey, "203.0.113.0/22", "203.0.113.254", true)
+	_ = store.RecordCheckpoint(taskKey, "203.0.113.0/24", "203.0.113.254", true)
 
 	cps, err = store.GetCheckpoints(taskKey)
 	if err != nil {
@@ -144,12 +144,12 @@ func TestTargetStore_Checkpoints(t *testing.T) {
 		t.Fatalf("expected 2 checkpoints, got %d", len(cps))
 	}
 
-	p1 := cps["198.51.100.0/17"]
+	p1 := cps["198.51.100.0/24"]
 	if p1 == nil || p1.LastIP != "198.51.100.60" || p1.Completed {
 		t.Errorf("unexpected p1: %#v", p1)
 	}
 
-	p2 := cps["203.0.113.0/22"]
+	p2 := cps["203.0.113.0/24"]
 	if p2 == nil || !p2.Completed {
 		t.Errorf("unexpected p2: %#v", p2)
 	}

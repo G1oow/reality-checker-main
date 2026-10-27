@@ -90,7 +90,7 @@ cd src
 cd src
 .\build.ps1         # Windows
 ```
-
+构建脚本会自动校验（缺失则下载）`internal/data/assets/Country.mmdb` 用于内置 GeoIP，国内网络先在 `src/config.yaml` 配好 `proxy` 再构建。产物默认名为 `reality-checker`，需要与其他脚本对齐时用 `APP_NAME=reality-checker-main` 覆盖；改完源码把产物覆盖到仓库根目录即可。构建不依赖源码目录下的 `src/data/`；运行时若需外部规则库，直接读主程序同级的 `data/`。
 构建脚本会自动校验（缺失则下载）`internal/data/assets/Country.mmdb` 用于内置 GeoIP，国内网络先在 `src/config.yaml` 配好 `proxy` 再构建。产物默认名为 `reality-checker`，需要与其他脚本对齐时用 `APP_NAME=reality-checker-main` 覆盖；改完源码把产物覆盖到仓库根目录即可。
 
 **顺序要求**：`web/dist` 是 `go:embed` 的编译依赖，必须先构建前端再编译 Go，否则报 `pattern dist/*: no matching files found`。环境：Go 1.26+、pnpm。
@@ -117,7 +117,7 @@ cat file.csv | ./reality-checker-main pipe
 ./reality-checker-main auto --in asn.txt --limit 10
 
 # 只要 IPv6 目标
-./reality-checker-main auto 2001:db8::598 --limit 5 -6
+./reality-checker-main auto 2001:db8::/64 --limit 5 -6
 ```
 
 `auto` 常用参数：`--limit/-m`、`--check-all/-a`、`--threads/-t`、`--timeout`、`--ipv4-only/-4`、`--ipv6-only/-6`、`--allow-cdn`、`--allow-hot`、`--min-stars`、`--max-handshake`、`--country`、`--export`、`-v`。
@@ -154,8 +154,7 @@ cat file.csv | ./reality-checker-main pipe
 | `reality-checker-main.exe` | Windows 主程序（自编译版） |
 | `config.yaml` | 过滤策略与运行参数 |
 | `data/` | 离线规则库（必须与主程序同级） |
-| `file.csv` | RealiTLScanner 历史扫描结果，可直接 `pipe` 喂入 |
-| `RealiTLScanner.exe` | 老版扫描器，程序已内置扫描能力 |
+| `file.csv` | 历史扫描结果样例（已脱敏，IP/域名均为示例值），可直接 `pipe` 喂入 |
 | `install.sh` / `install.ps1` | 一键部署脚本 |
 | `Reality目标检测-小白教程.md` | 完整使用教程 |
 | `src/` | 完整源码（Go + React，含 build.sh / build.ps1） |

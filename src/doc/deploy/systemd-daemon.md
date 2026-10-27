@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/qualvey/one-reality/main/scripts/in
 只需直接编辑 `/etc/default/reasni`：
 ```bash
 # /etc/default/reasni
-DAEMON_OPTS="--host 0.0.0.0 --port 8881 --token <YOUR_API_TOKEN> -t 150 --interval 10"
+DAEMON_OPTS="--host 127.0.0.1 --port 8881 --token <YOUR_API_TOKEN> -t 150 --interval 10"
 ```
 保存后执行重启即可生效：
 ```bash
@@ -165,6 +165,6 @@ journalctl -u reasni-daemon -n 100 --no-pager
 ```
 请在 `/etc/default/reasni` 的 `DAEMON_OPTS` 开头加上 `-f` 参数：
 ```bash
-DAEMON_OPTS="-f --host 0.0.0.0 --port 8881 --token <YOUR_API_TOKEN> -t 150 --interval 10"
+DAEMON_OPTS="-f --host 127.0.0.1 --port 8881 --token <YOUR_API_TOKEN> -t 150 --interval 10"
 ```
 然后执行 `reasni-service restart`。

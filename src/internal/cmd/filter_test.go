@@ -24,30 +24,30 @@ func TestParseDomains(t *testing.T) {
 func TestCalculateRemainingIPs(t *testing.T) {
 	cidrs := []string{
 		"192.168.1.0/24",
-		"198.51.100.0/17",
+		"203.0.113.0/24",
 	}
 
-	// 1. No checkpoints: 256 + 32768 = 33024
+	// 1. No checkpoints: 256 + 256 = 512
 	total := CalculateRemainingIPs(cidrs, nil)
-	if total != 33024 {
-		t.Errorf("expected 33024, got %d", total)
+	if total != 512 {
+		t.Errorf("expected 512, got %d", total)
 	}
 
-	// 2. 192.168.1.0/24 completed: 0 + 32768 = 32768
+	// 2. 192.168.1.0/24 completed: 0 + 256 = 256
 	checkpoints := map[string]*storage.CheckpointRecord{
 		"192.168.1.0/24": {
 			CIDR:      "192.168.1.0/24",
 			Completed: true,
 		},
-		"198.51.100.0/17": {
-			CIDR:      "198.51.100.0/17",
-			LastIP:    "198.51.100.0", // 1 IP scanned, 32767 remaining
+		"203.0.113.0/24": {
+			CIDR:      "203.0.113.0/24",
+			LastIP:    "203.0.113.0", // 1 IP scanned, 255 remaining
 			Completed: false,
 		},
 	}
 	remaining := CalculateRemainingIPs(cidrs, checkpoints)
-	if remaining != 32767 {
-		t.Errorf("expected 32767, got %d", remaining)
+	if remaining != 255 {
+		t.Errorf("expected 255, got %d", remaining)
 	}
 }
 
