@@ -122,7 +122,7 @@ cat file.csv | ./reality-checker-main pipe
 
 `auto` 常用参数：`--limit/-m`、`--check-all/-a`、`--threads/-t`、`--timeout`、`--ipv4-only/-4`、`--ipv6-only/-6`、`--allow-cdn`、`--allow-hot`、`--min-stars`、`--max-handshake`、`--country`、`--export`、`-v`。
 
-完整参数与结果解读见 **[Reality目标检测-小白教程.md](./Reality目标检测-小白教程.md)**。
+完整参数说明见下方「常用命令」与 `reality-checker-main --help`，结果列含义见「挑选建议」。
 
 ---
 
@@ -156,9 +156,8 @@ cat file.csv | ./reality-checker-main pipe
 | `data/` | 离线规则库（必须与主程序同级） |
 | `file.csv` | 历史扫描结果样例（已脱敏，IP/域名均为示例值），可直接 `pipe` 喂入 |
 | `install.sh` / `install.ps1` | 一键部署脚本 |
-| `Reality目标检测-小白教程.md` | 完整使用教程 |
+| `vps-init.sh` | 新 VPS 开荒脚本（公钥/改端口/测速/调优/选目标/建节点，分段幂等） |
 | `src/` | 完整源码（Go + React，含 build.sh / build.ps1） |
-| `VPS初始化一键工作流.md` | 新机开荒流水线（公钥/改端口/测速/调优/选目标） |
 
 ---
 

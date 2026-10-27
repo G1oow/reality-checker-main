@@ -88,4 +88,4 @@ if [ -n "${TARGET}" ]; then
 else
   echo "[*] 用法: cd ${DIR} && ./reality-checker-main auto <你的VPS_IP> --limit 5"
 fi
-echo "[*] 完整说明见: ${BASE}/Reality%E7%9B%AE%E6%A0%87%E6%A3%80%E6%B5%8B-%E5%B0%8F%E7%99%BD%E6%95%99%E7%A8%8B.md"
+echo "[*] 完整说明见: ${BASE}/README.md"
