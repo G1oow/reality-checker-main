@@ -14,6 +14,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     
+    defaults:
+      run:
+        working-directory: src
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -21,29 +25,54 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version-file: go.mod
+        go-version-file: src/go.mod
+        cache-dependency-path: src/go.sum
+
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        # 与 web/pnpm-lock.yaml 的 lockfileVersion 9.0 对齐
+        version: 9
+        run_install: false
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'pnpm'
+        cache-dependency-path: src/web/pnpm-lock.yaml
         
     - name: Get version from tag
       id: version
       run: |
-        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-          VERSION=${GITHUB_REF#refs/tags/}
+        if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+          VERSION="${GITHUB_REF#refs/tags/}"
         else
           VERSION="dev-$(date +%Y%m%d-%H%M%S)"
         fi
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Building version: $VERSION"
+        echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+        echo "Building version: ${VERSION}"
         
     - name: Get build time
       id: build_time
       run: |
         BUILD_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-        echo "time=$BUILD_TIME" >> $GITHUB_OUTPUT
+        echo "time=${BUILD_TIME}" >> "${GITHUB_OUTPUT}"
         
     - name: Build for Linux and Windows
       run: |
-        VERSION="${{ steps.version.outputs.version }}" COMMIT="$(git rev-parse --short HEAD)" ./build.sh
-        
+        VERSION="${{ steps.version.outputs.version }}" \
+        COMMIT="$(git rev-parse --short HEAD)" \
+        BUILD_TIME="${{ steps.build_time.outputs.time }}" \
+        ./build.sh
+
+    # install.sh 从 Releases 下载固定文件名，这里额外产出这两个别名
+    - name: Prepare release asset aliases
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        cp dist/reality-checker-linux-amd64 dist/reality-checker-main
+        cp dist/reality-checker-windows-amd64.exe dist/reality-checker-main.exe
+        ls -lh dist
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
