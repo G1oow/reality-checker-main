@@ -26,6 +26,7 @@ import (
 	"RealityChecker/internal/types"
 	"RealityChecker/internal/version"
 
+	"github.com/oschwald/geoip2-golang"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -349,7 +350,7 @@ func resolveInputToCIDRs(targetInput string, inFile string, filter types.FilterC
 
 // resolveAutoInput discovers announced prefixes for a target IP and keeps only
 // prefixes whose representative address is in the target IP's country and matches IPv4/IPv6 filter.
-func resolveAutoInput(ctx context.Context, targetInput string, inFile string, country string, filter types.FilterConfig) ([]string, string, string, error) {
+func resolveAutoInput(ctx context.Context, targetInput string, inFile string, country string, filter types.FilterConfig, proxyURL string) ([]string, string, string, error) {
 	if inFile != "" || targetInput == "" || strings.Contains(targetInput, "/") {
 		return resolveInputToCIDRs(targetInput, inFile, filter), "", "", nil
 	}
@@ -364,16 +365,17 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 		return resolveInputToCIDRs(targetInput, inFile, filter), "", "", nil
 	}
 	defer reader.Close()
-	targetRecord, err := reader.Country(ip)
-	if err != nil || targetRecord.Country.IsoCode == "" {
-		return nil, "", "", fmt.Errorf("无法确定入口 IP %s 的国家", targetInput)
-	}
-	targetCountry := strings.ToUpper(strings.TrimSpace(country))
+
+	targetCountry := resolveTargetCountry(ctx, reader, ip, targetInput, proxyURL)
 	if targetCountry == "" {
-		targetCountry = targetRecord.Country.IsoCode
+		return nil, "", "", fmt.Errorf("无法确定入口 IP %s 的国家：本地 GeoIP 库无该地址记录，且在线归属地查询全部失败（请检查网络，或用 --country 显式指定两位国家代码）", targetInput)
 	}
-	if len(targetCountry) != 2 {
-		return nil, "", "", fmt.Errorf("国家代码必须是两位 ISO 代码（例如 DE、US）")
+	overridden := strings.ToUpper(strings.TrimSpace(country))
+	if overridden != "" {
+		if len(overridden) != 2 {
+			return nil, "", "", fmt.Errorf("国家代码必须是两位 ISO 代码（例如 DE、US）")
+		}
+		targetCountry = overridden
 	}
 
 	asnNumber, prefixes, err := asn.NewClient(15*time.Second).PrefixesForIP(ctx, ip.String())
@@ -383,6 +385,7 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 	asnStr := fmt.Sprintf("AS%d", asnNumber)
 
 	filtered := make([]string, 0, len(prefixes))
+	unknown := 0
 	for _, raw := range prefixes {
 		prefix, err := netip.ParsePrefix(raw)
 		if err != nil {
@@ -395,18 +398,61 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 		if filter.IPv6Only && !prefix.Addr().Is6() {
 			continue
 		}
-
-		record, err := reader.Country(net.ParseIP(prefix.Addr().String()))
-		if err == nil && record.Country.IsoCode == targetCountry {
+		// 本地库有记录时按国家严格过滤；查不到（IPv6 段覆盖不全很常见）时保留，
+		// 因为该网段确实属于这个 ASN，仅凭本地库缺失不足以否认它。
+		switch prefixCountry(reader, prefix.Addr()) {
+		case targetCountry:
+			filtered = append(filtered, prefix.String())
+		case "":
+			unknown++
 			filtered = append(filtered, prefix.String())
 		}
 	}
 	if len(filtered) == 0 {
 		return nil, asnStr, targetCountry, fmt.Errorf("AS%d 没有与入口 IP 同国家（%s）且符合 IP 协议族限制的宣布网段", asnNumber, targetCountry)
 	}
+	if unknown > 0 {
+		logger.PrintTimestampedMessage("入口 IP %s 属于 %s，国家 %s；已过滤为 %d 个网段（其中 %d 个本地库无归属记录，按 ASN 归属保留）",
+			targetInput, asnStr, targetCountry, len(filtered), unknown)
+		return filtered, asnStr, targetCountry, nil
+	}
 	logger.PrintTimestampedMessage("入口 IP %s 属于 %s，国家 %s；已过滤为 %d 个同国家网段",
 		targetInput, asnStr, targetCountry, len(filtered))
 	return filtered, asnStr, targetCountry, nil
+}
+
+// resolveTargetCountry 先查本地 GeoIP 库，缺失时（IPv6 覆盖不全很常见）回退到在线查询。
+// country 参数非空时直接采用调用方指定的国家代码。
+func resolveTargetCountry(ctx context.Context, reader *geoip2.Reader, ip net.IP, targetInput, proxyURL string) string {
+	if reader != nil {
+		if rec, err := reader.Country(ip); err == nil && rec != nil {
+			if code := strings.ToUpper(strings.TrimSpace(rec.Country.IsoCode)); len(code) == 2 {
+				return code
+			}
+		}
+	}
+
+	logger.PrintTimestampedMessage("本地 GeoIP 库无 %s 的记录（常见于 IPv6 段覆盖不全），改用在线归属地查询...", targetInput)
+	code, err := asn.NewCountryLookup(proxyURL).LookupCountry(ctx, targetInput)
+	if err != nil {
+		logger.PrintTimestampedMessage("⚠️ 在线归属地查询失败：%v", err)
+		return ""
+	}
+	logger.PrintTimestampedMessage("在线查询结果：%s 归属 %s", targetInput, code)
+	return code
+}
+
+// prefixCountry 返回网段代表地址的国家代码；本地库缺失时返回空串（不发起在线查询，
+// 避免对每个前缀都打一次外部接口）。
+func prefixCountry(reader *geoip2.Reader, addr netip.Addr) string {
+	if reader == nil || !addr.IsValid() {
+		return ""
+	}
+	rec, err := reader.Country(net.ParseIP(addr.String()))
+	if err != nil || rec == nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(rec.Country.IsoCode))
 }
 
 // appendCIDR 解析并追加 CIDR 或单 IP 扩展网段，自动去重并规范化
@@ -625,7 +671,11 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 		}
 	}
 
-	cidrs, asnStr, countryStr, err := resolveAutoInput(r.ctx, targetInput, inFile, country, filter)
+	proxyURL := ""
+	if r.config != nil && r.config.Proxy.Scanner && r.config.Proxy.URL != "" {
+		proxyURL = r.config.Proxy.URL
+	}
+	cidrs, asnStr, countryStr, err := resolveAutoInput(r.ctx, targetInput, inFile, country, filter, proxyURL)
 	if err != nil {
 		logger.PrintError(fmt.Sprintf("自动查询 ASN 网段失败: %v", err))
 		return
