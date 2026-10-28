@@ -111,26 +111,22 @@ func main() {
 				os.Exit(1)
 			}
 		} else if !egressInfo.IsCN {
+			// 非 CN 出口不再拦截：是否影响结果取决于被扫描目标是否在 CN 网段，
+			// 由 auto 分支在确定目标国家后再决定是否强提示（见 warnEgressMismatch）。
 			if force {
 				if shouldPrintBanner {
 					fmt.Printf("⚠️ 当前出口 IP [%s] 归属地为 [%s / %s]，非中国大陆 (CN) 网络。已指定 --force 参数，强制拉起继续执行...\n", egressInfo.IP, egressInfo.CountryCode, egressInfo.CountryName)
 				}
-			} else {
-				cmdName := version.GetAppName()
-				logger.PrintErrorWithDetails(
-					fmt.Sprintf("❌ 出口网络限制：当前出口 IP [%s] 归属地为 [%s / %s]，非中国大陆 (CN) 网络", egressInfo.IP, egressInfo.CountryCode, egressInfo.CountryName),
-					"限制说明:",
-					"  Reality 伪装目标探测必须基于中国大陆 (CN) 的出境网络视角，以保证测速与证书防封真实性。",
-					"解决方式:",
-					"  若确认在非 CN 网络环境下强制运行，请追加 --force 或 -f 参数拉起程序：",
-					fmt.Sprintf("    %s --force %s", cmdName, strings.Join(remainingArgs, " ")),
-				)
-				os.Exit(1)
+			} else if shouldPrintBanner {
+				fmt.Printf("⚠️ 当前出口 IP [%s] 归属地为 [%s / %s]，非中国大陆 (CN) 网络。\n", egressInfo.IP, egressInfo.CountryCode, egressInfo.CountryName)
+				fmt.Println("   若被扫描目标位于中国大陆网段，握手延迟不代表国内客户端的真实体验，结果仅供参考。")
 			}
+			cmd.SetEgressInfo(egressInfo.IP, egressInfo.CountryCode, egressInfo.IsCN)
 		} else {
 			if shouldPrintBanner {
 				fmt.Printf("🌐 出口网络检测通过: %s (%s / %s)\n", egressInfo.IP, egressInfo.CountryCode, egressInfo.CountryName)
 			}
+			cmd.SetEgressInfo(egressInfo.IP, egressInfo.CountryCode, true)
 		}
 	}
 

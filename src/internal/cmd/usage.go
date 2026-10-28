@@ -63,7 +63,7 @@ func PrintUsage() {
 	fmt.Println("")
 	fmt.Println("全局选项:")
 	fmt.Println("  -c, --config FILE          指定配置文件路径 (默认自动探测)")
-	fmt.Println("  -f, --force                强制启动运行，跳过非 CN (中国大陆) 出口 IP 的检测限制")
+	fmt.Println("  -f, --force                强制启动运行，跳过出口 IP 探测失败时的阻断（非 CN 出口不再拦截，仅提示视角差异）")
 	fmt.Println("")
 	fmt.Println("示例:")
 	fmt.Printf("  %s get 203.0.113.10 -n 5 -s 4\n", appName)

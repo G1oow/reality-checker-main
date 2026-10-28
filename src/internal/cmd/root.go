@@ -18,13 +18,31 @@ import (
 )
 
 // RootCmd 根命令结构
+// EgressInfo 记录本次进程运行时的公网出口归属，用于在扫描 CN 网段时给出视角失真提示
+type EgressInfo struct {
+	IP          string
+	CountryCode string
+	IsCN        bool
+	Known       bool // 是否成功探测到出口归属
+}
+
+// RootCmd 根命令结构
 type RootCmd struct {
 	config       *types.Config
 	engine       *core.Engine
 	batchManager *batch.Manager
 	ctx          context.Context
 	cancel       context.CancelFunc
+	egress       *EgressInfo
 }
+
+// SetEgressInfo 由 main 在出口探测完成后注入，供各子命令判断测速视角是否可信
+func SetEgressInfo(ip, countryCode string, isCN bool) {
+	pendingEgress = &EgressInfo{IP: ip, CountryCode: countryCode, IsCN: isCN, Known: ip != ""}
+}
+
+// pendingEgress 在 RootCmd 创建前暂存出口信息
+var pendingEgress *EgressInfo
 
 // NewRootCmd 创建根命令 (可传入已预解析好的配置，若为空则自动通过默认策略加载)
 func NewRootCmd(initialCfg ...*types.Config) (*RootCmd, error) {
@@ -80,6 +98,7 @@ func NewRootCmd(initialCfg ...*types.Config) (*RootCmd, error) {
 		batchManager: batchManager,
 		ctx:          ctx,
 		cancel:       cancel,
+		egress:       pendingEgress,
 	}, nil
 }
 
