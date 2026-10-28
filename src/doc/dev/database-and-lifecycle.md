@@ -9,7 +9,7 @@
    - 开启预写日志模式（`PRAGMA journal_mode=WAL`）与单写多读并发；
    - 适用规模：单机 100 万条以内数据高效运转。
 2. **企业级/分布式集群引擎（PostgreSQL - 基于 pgxpool 原生驱动）**：
-   - 抽象通用存储接口 [`storage.Store`](../internal/storage/interface.go)；
+   - 抽象通用存储接口 `storage.Store`（`internal/storage/interface.go`）；
    - 基于原生二进制传输协议驱动 `github.com/jackc/pgx/v5/pgxpool`；
    - 无锁多协程并发写入，通过 `pgx.Batch` 管线化批量执行 Upsert；
    - 支持通过 `psql` 客户端直接管理与复杂分析；
