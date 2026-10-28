@@ -433,7 +433,15 @@ func resolveTargetCountry(ctx context.Context, reader *geoip2.Reader, ip net.IP,
 	}
 
 	logger.PrintTimestampedMessage("本地 GeoIP 库无 %s 的记录（常见于 IPv6 段覆盖不全），改用在线归属地查询...", targetInput)
+
+	// 归属地查询只是元数据查询，与 ASN 查询同一性质。若配置了扫描代理但代理不可用
+	// （例如默认配置里的 socks5://127.0.0.1:666 并未运行），不应因此判定失败，
+	// 这里先按配置走一次，失败且确实配置了代理时再回退直连重试。
 	code, err := asn.NewCountryLookup(proxyURL).LookupCountry(ctx, targetInput)
+	if err != nil && proxyURL != "" {
+		logger.PrintTimestampedMessage("⚠️ 经代理 (%s) 查询归属地失败，回退直连重试...", proxyURL)
+		code, err = asn.NewCountryLookup("").LookupCountry(ctx, targetInput)
+	}
 	if err != nil {
 		logger.PrintTimestampedMessage("⚠️ 在线归属地查询失败：%v", err)
 		return ""
