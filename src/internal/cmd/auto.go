@@ -290,6 +290,35 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
+// warnEgressMismatch 在"扫描目标属于中国大陆网段、但本机出口不在 CN"时提示视角失真。
+// 非 CN 出口本身并不构成阻断：只有目标在 CN 段时，握手延迟才需要国内客户端视角才有参考价值。
+func (r *RootCmd) warnEgressMismatch(targetInput, inFile, countryStr string) {
+	if r.egress == nil || !r.egress.Known || r.egress.IsCN {
+		return
+	}
+
+	targetCN := strings.EqualFold(strings.TrimSpace(countryStr), "CN")
+	if !targetCN {
+		// countryStr 为空（文件批量 / CIDR 直扫）时，用 GeoIP 反查入口 IP 的归属
+		if targetInput != "" && inFile == "" && !strings.Contains(targetInput, "/") {
+			if ip := net.ParseIP(targetInput); ip != nil {
+				if reader, err := data.OpenGeoIPReader("data/Country.mmdb", "Country.mmdb"); err == nil {
+					if rec, err := reader.Country(ip); err == nil && rec != nil {
+						targetCN = strings.EqualFold(rec.Country.IsoCode, "CN")
+					}
+					reader.Close()
+				}
+			}
+		}
+	}
+	if !targetCN {
+		return
+	}
+
+	logger.PrintTimestampedMessage("⚠️ 视角提示：当前出口为 %s (%s)，而扫描目标位于中国大陆网段。", r.egress.CountryCode, r.egress.IP)
+	logger.PrintTimestampedMessage("   握手延迟反映的是海外出口的观测值，不代表国内客户端的真实体验；证书与可用性检测不受影响。")
+}
+
 // resolveInputToCIDRs 原生构建 CIDR 扫描队列（无需依赖易失效的第三方 HTTP API）
 func resolveInputToCIDRs(targetInput string, inFile string, filter types.FilterConfig) []string {
 	var cidrs []string
@@ -601,6 +630,9 @@ func (r *RootCmd) parseAndExecuteAuto(args []string) {
 		logger.PrintError(fmt.Sprintf("自动查询 ASN 网段失败: %v", err))
 		return
 	}
+
+	// 视角校验：仅当扫描目标位于 CN 网段、而本机出口不在 CN 时，握手延迟不代表国内客户端的真实体验
+	r.warnEgressMismatch(targetInput, inFile, countryStr)
 
 	// Cache-First 快速通道：若本地库存在同 ASN 且未过期的资产，优先进行秒级直出（默认 0 网络请求，可加 --recheck 在线复核）
 	var cachedVerified []*types.DetectionResult

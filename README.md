@@ -4,7 +4,7 @@
 
 程序会硬性校验 TLS 1.3、X25519、HTTP/2、证书有效性、SNI 匹配、非国内站点，并按是否 CDN、是否热门大站、握手延迟、证书剩余天数、页面状态综合打星，只输出真正可用的目标。
 
-> 配套程序为 **main 分支自编译版**。GitHub 上流传的 `v2.2.3`（csv 命令只取第 3 列）与 `v1.1.2` release（证书校验 bug，结果恒为 0）**均不可用**，请勿下载 release 版本。
+> 配套程序由 **GitHub Actions 从 `main` 构建并发布到 Releases**。上游流传的 `v2.2.3`（csv 命令只取第 3 列）与 `v1.1.2` release（证书校验 bug，结果恒为 0）**均不可用**，请只使用本仓库的 release。
 
 ---
 
@@ -64,12 +64,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $env:REF='main'; irm
 
 ## 手动部署
 
+主程序不再随仓库分发，统一从 Releases 获取：
+
 ```bash
-git clone https://github.com/G1oow/reality-checker-main.git /root/rc-new
-cd /root/rc-new
+mkdir -p /root/rc-new && cd /root/rc-new
+curl -fL -o reality-checker-main \
+  https://github.com/G1oow/reality-checker-main/releases/latest/download/reality-checker-main
 chmod +x reality-checker-main
 ./reality-checker-main auto <你的VPS_IP> --limit 5
 ```
+
+指定版本时把 `latest` 换成对应 tag：`.../releases/download/<tag>/reality-checker-main`。
 
 Windows 直接双击 `reality-checker-main.exe` 或按上面 PowerShell 命令运行。
 
@@ -90,8 +95,9 @@ cd src
 cd src
 .\build.ps1         # Windows
 ```
-构建脚本会自动校验（缺失则下载）`internal/data/assets/Country.mmdb` 用于内置 GeoIP，国内网络先在 `src/config.yaml` 配好 `proxy` 再构建。产物默认名为 `reality-checker`，需要与其他脚本对齐时用 `APP_NAME=reality-checker-main` 覆盖；改完源码把产物覆盖到仓库根目录即可。构建不依赖源码目录下的 `src/data/`；运行时若需外部规则库，直接读主程序同级的 `data/`。
-构建脚本会自动校验（缺失则下载）`internal/data/assets/Country.mmdb` 用于内置 GeoIP，国内网络先在 `src/config.yaml` 配好 `proxy` 再构建。产物默认名为 `reality-checker`，需要与其他脚本对齐时用 `APP_NAME=reality-checker-main` 覆盖；改完源码把产物覆盖到仓库根目录即可。
+构建脚本会自动校验（缺失则下载）`internal/data/assets/Country.mmdb` 用于内置 GeoIP，国内网络先在 `src/config.yaml` 配好 `proxy` 再构建。产物默认名为 `reality-checker`，需要与其他脚本对齐时用 `APP_NAME=reality-checker-main` 覆盖。构建不依赖源码目录下的 `src/data/`；运行时若需外部规则库，直接读主程序同级的 `data/`。
+
+**产物不再提交进仓库**：推 tag（`git tag v1.0.0 && git push origin v1.0.0`）会触发 `.github/workflows/build.yml` 自动构建 Linux/Windows 产物并发布 Release，`install.sh` / `install.ps1` 从 Release 下载。
 
 **顺序要求**：`web/dist` 是 `go:embed` 的编译依赖，必须先构建前端再编译 Go，否则报 `pattern dist/*: no matching files found`。环境：Go 1.26+、pnpm。
 
@@ -150,8 +156,8 @@ cat file.csv | ./reality-checker-main pipe
 
 | 文件 | 说明 |
 |---|---|
-| `reality-checker-main` | Linux 主程序（自编译版） |
-| `reality-checker-main.exe` | Windows 主程序（自编译版） |
+| `reality-checker-main` | Linux 主程序（从 Releases 下载，不再入库） |
+| `reality-checker-main.exe` | Windows 主程序（从 Releases 下载，不再入库） |
 | `config.yaml` | 过滤策略与运行参数 |
 | `data/` | 离线规则库（必须与主程序同级） |
 | `file.csv` | 历史扫描结果样例（已脱敏，IP/域名均为示例值），可直接 `pipe` 喂入 |
