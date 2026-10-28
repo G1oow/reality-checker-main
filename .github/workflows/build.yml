@@ -78,7 +78,7 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          dist/*
+          src/dist/*
         body: |
           ## RealityChecker ${{ steps.version.outputs.version }}
 
@@ -150,4 +150,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: reality-checker-builds
-        path: dist/
+        path: src/dist/
