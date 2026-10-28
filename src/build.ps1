@@ -9,7 +9,8 @@ $BuildTime = if ($env:BUILD_TIME) { $env:BUILD_TIME } else { (Get-Date).ToUniver
 
 if (-not $Version) { $Version = "dev" }
 if (-not $Commit) { $Commit = "unknown" }
-$Ldflags = "-s -w -X RealityChecker/internal/version.AppName=$AppName -X RealityChecker/internal/version.Version=$Version -X RealityChecker/internal/version.Commit=$Commit -X RealityChecker/internal/version.BuildTime=$BuildTime"
+# BUILD_TIME 可能含空格，-ldflags 的值需用引号包裹，否则 go build 会退化成 `usage: link`
+$Ldflags = "-s -w -X 'RealityChecker/internal/version.AppName=$AppName' -X 'RealityChecker/internal/version.Version=$Version' -X 'RealityChecker/internal/version.Commit=$Commit' -X 'RealityChecker/internal/version.BuildTime=$BuildTime'"
 
 if (-not (Test-Path $DistDir)) {
     New-Item -ItemType Directory -Path $DistDir | Out-Null
