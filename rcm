@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# R-C-M 面板快捷启动器：一条命令进入 VPS 终端面板
+#
+# 定位顺序：RC_HOME 环境变量 → 脚本所在目录 → /root/rc-new → ~/rc-new → /opt/rc → /usr/local/rc
+# 安装脚本 install.sh 会把它放到 /usr/local/bin/rcm；仓库内也可直接 ./rcm 运行。
+set -euo pipefail
+
+APP_NAME="reality-checker-main"
+
+usage() {
+  cat <<'EOF'
+用法: rcm [面板选项]
+
+  rcm                 进入 VPS 终端面板（沿用上次保存的扫描参数）
+  rcm --help          查看面板全部选项与快捷键
+  rcm --no-tui        不启动全屏面板，直接以纯文本跑一次扫描（脚本/无终端环境）
+  rcm --mode country --country DE -m 3
+                      按国家/地区 ASN 扫描，命中 3 个目标即停
+
+面板快捷键: s 开始扫描 · x/esc 停止 · r 重新探测入口 · ↑↓ 选择 · ←→ 改值 · 空格切换开关 · tab 切换焦点 · q 退出
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+resolve_dir() {
+  local candidate
+  if [[ -n "${RC_HOME:-}" && -x "${RC_HOME}/${APP_NAME}" ]]; then
+    printf '%s' "${RC_HOME}"
+    return 0
+  fi
+  local self_dir
+  self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -x "${self_dir}/${APP_NAME}" ]]; then
+    printf '%s' "${self_dir}"
+    return 0
+  fi
+  for candidate in "/root/rc-new" "${HOME:-/root}/rc-new" "/opt/rc" "/usr/local/rc"; do
+    if [[ -x "${candidate}/${APP_NAME}" ]]; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! DIR="$(resolve_dir)"; then
+  printf '✖ 未找到 %s：请先运行 install.sh 安装，或用 RC_HOME=<安装目录> rcm 指定位置\n' "${APP_NAME}" >&2
+  exit 1
+fi
+
+cd "${DIR}"
+exec "./${APP_NAME}" ui "$@"
