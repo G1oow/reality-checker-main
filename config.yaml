@@ -148,6 +148,9 @@ network:
   dns_servers:
     - "8.8.8.8"
     - "1.1.1.1"
+  # 目标连接协议族："" 不限定 / ipv4 仅用 IPv4 校验 / ipv6 仅用 IPv6 校验
+  # 仅 IPv6 时域名必须有 AAAA 记录才会被校验（面板的「校验协议族」对应此键）
+  family: ""
 
 # 并发性能配置
 concurrency:

@@ -241,6 +241,7 @@ filter:
 network:
   timeout: 3s
   retries: 1
+  family: ""                   # 目标连接协议族: "" 不限定 / ipv4 仅 IPv4 校验 / ipv6 仅 IPv6 校验 (仅 IPv6 时域名必须有 AAAA 记录)
 
 # 并发性能
 concurrency:

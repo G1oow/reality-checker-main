@@ -132,6 +132,9 @@ func mergeConfig(defaultConfig *types.Config, fileConfig *types.Config) {
 	if fileConfig.Network.Proxy != "" {
 		defaultConfig.Network.Proxy = fileConfig.Network.Proxy
 	}
+	if family := strings.TrimSpace(fileConfig.Network.Family); family != "" {
+		defaultConfig.Network.Family = family
+	}
 
 	// TLS配置
 	if fileConfig.TLS.MinVersion > 0 {

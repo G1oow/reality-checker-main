@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"RealityChecker/internal/types"
 )
@@ -274,5 +275,23 @@ database:
 	}
 }
 
+// 配置文件里的 network.family 必须真正生效，否则「仅 IPv4 / 仅 IPv6 校验」会被静默忽略。
+func TestLoadConfigMergesDialFamily(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := "network:\n  family: ipv6\n  timeout: 7s\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("加载配置失败: %v", err)
+	}
+	if cfg.Network.Family != "ipv6" {
+		t.Fatalf("network.family 应被合并为 ipv6，实际 %q", cfg.Network.Family)
+	}
+	if cfg.Network.Timeout != 7*time.Second {
+		t.Fatalf("network.timeout 应被合并为 7s，实际 %v", cfg.Network.Timeout)
+	}
+}
