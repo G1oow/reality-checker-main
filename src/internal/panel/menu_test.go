@@ -3,6 +3,9 @@ package panel
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,11 +17,18 @@ import (
 	"github.com/oschwald/geoip2-golang"
 )
 
-// newTestMenu 构造菜单：探测结果固定为「可用 IPv4 出口 DE + 不可用 IPv6 出口」
+// newTestMenu 构造菜单：探测结果固定为「可用 IPv4 出口 DE + 不可用 IPv6 出口」，
+// 卸载路径指向临时目录，避免测试误删真实的安装文件
 func newTestMenu(t *testing.T, input string, settings Settings) (*Menu, *bytes.Buffer, string) {
 	t.Helper()
 	out := &bytes.Buffer{}
 	settingsPath := filepath.Join(t.TempDir(), "panel.json")
+	installDir := t.TempDir()
+	for _, name := range []string{"reality-checker-main", "rcm", "config.yaml"} {
+		if err := os.WriteFile(filepath.Join(installDir, name), []byte("x"), 0o755); err != nil {
+			t.Fatalf("准备安装文件失败: %v", err)
+		}
+	}
 	color := false
 	menu := NewMenu(context.Background(), MenuConfig{
 		Deps: Deps{
@@ -34,6 +44,12 @@ func newTestMenu(t *testing.T, input string, settings Settings) (*Menu, *bytes.B
 		In:           strings.NewReader(input),
 		Out:          out,
 		Color:        &color,
+		Uninstall: &UninstallConfig{
+			ExecPath:     filepath.Join(installDir, "reality-checker-main"),
+			RCMPath:      filepath.Join(installDir, "rcm"),
+			InstallDir:   installDir,
+			SettingsPath: settingsPath,
+		},
 	})
 	return menu, out, settingsPath
 }
@@ -67,7 +83,8 @@ func TestMenuRendersGroupedNumberedItems(t *testing.T) {
 		"【扫描参数】",
 		"【过滤策略】",
 		"【执行】",
-		"[1]", "[13]",
+		"【维护】",
+		"[1]", "[13]", "[u]", "[x]",
 		"请输入选项",
 		"已退出面板",
 	} {
@@ -233,5 +250,118 @@ func TestMenuBannerIsAligned(t *testing.T) {
 	}
 	if len(widths) != 1 {
 		t.Fatalf("横幅各行宽度不一致：%v", widths)
+	}
+}
+
+func TestMenuUninstallCancelKeepsFiles(t *testing.T) {
+	menu, _, _ := newTestMenu(t, "x\n\n0\n", DefaultSettings(baseFilter()))
+	text := runTestMenu(t, menu)
+
+	if !strings.Contains(text, "已取消卸载") {
+		t.Fatalf("回车应取消卸载：\n%s", text)
+	}
+	for _, path := range []string{menu.uninstall.ExecPath, menu.uninstall.RCMPath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("取消卸载后 %s 应保留：%v", path, err)
+		}
+	}
+}
+
+func TestMenuUninstallRemovesInstallFiles(t *testing.T) {
+	menu, _, _ := newTestMenu(t, "x\n1\n", DefaultSettings(baseFilter()))
+	text := runTestMenu(t, menu)
+
+	if !strings.Contains(text, "卸载完成") {
+		t.Fatalf("应提示卸载完成：\n%s", text)
+	}
+	for _, path := range []string{menu.uninstall.ExecPath, menu.uninstall.RCMPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s 应被删除", path)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(menu.uninstall.InstallDir, "config.yaml")); err != nil {
+		t.Fatalf("「仅卸载程序」应保留配置文件：%v", err)
+	}
+}
+
+func TestMenuUpdateInstallsLatestVersion(t *testing.T) {
+	dir := t.TempDir()
+	execPath := filepath.Join(dir, "reality-checker-main")
+	if err := os.WriteFile(execPath, []byte("old"), 0o755); err != nil {
+		t.Fatalf("准备旧程序失败: %v", err)
+	}
+	newContent := fakeLinuxBinary(0x3e)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api":
+			fmt.Fprintf(w, `{"tag_name":"v1.9.0","body":"- 新增更新与卸载","assets":[{"name":"reality-checker-main","browser_download_url":%q}]}`, serverURL(r)+"/dl")
+		case "/dl":
+			_, _ = w.Write(newContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	out := &bytes.Buffer{}
+	color := false
+	settingsPath := filepath.Join(t.TempDir(), "panel.json")
+	menu := NewMenu(context.Background(), MenuConfig{
+		Deps: Deps{Probe: func(context.Context, *geoip2.Reader, asn.ASNResolver) []EntryOption {
+			return nil
+		}},
+		Settings:     DefaultSettings(baseFilter()),
+		SettingsPath: settingsPath,
+		In:           strings.NewReader("u\ny\n0\n"),
+		Out:          out,
+		Color:        &color,
+		Updater: &Updater{
+			Client:   server.Client(),
+			APIURL:   server.URL + "/api",
+			Current:  "1.8.0",
+			ExecPath: execPath,
+			GOARCH:   "amd64",
+		},
+		Uninstall: &UninstallConfig{ExecPath: execPath, InstallDir: dir, SettingsPath: settingsPath},
+	})
+	if err := menu.Run(); err != nil {
+		t.Fatalf("菜单运行失败: %v", err)
+	}
+
+	text := StripANSI(out.String())
+	for _, want := range []string{"最新版本  v1.9.0", "已更新到 v1.9.0"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("更新输出缺少 %q：\n%s", want, text)
+		}
+	}
+	content, err := os.ReadFile(execPath)
+	if err != nil || string(content) != string(newContent) {
+		t.Fatalf("主程序未被替换：%q（%v）", content, err)
+	}
+}
+
+func TestMenuUpdateReportsUpToDate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"tag_name":"v1.8.0"}`)
+	}))
+	defer server.Close()
+
+	out := &bytes.Buffer{}
+	color := false
+	menu := NewMenu(context.Background(), MenuConfig{
+		Deps:         Deps{Probe: func(context.Context, *geoip2.Reader, asn.ASNResolver) []EntryOption { return nil }},
+		Settings:     DefaultSettings(baseFilter()),
+		SettingsPath: filepath.Join(t.TempDir(), "panel.json"),
+		In:           strings.NewReader("u\n0\n"),
+		Out:          out,
+		Color:        &color,
+		Updater:      &Updater{Client: server.Client(), APIURL: server.URL, Current: "1.8.0"},
+		Uninstall:    &UninstallConfig{},
+	})
+	if err := menu.Run(); err != nil {
+		t.Fatalf("菜单运行失败: %v", err)
+	}
+	if text := StripANSI(out.String()); !strings.Contains(text, "已是最新版本 v1.8.0") {
+		t.Fatalf("同版本应提示已是最新：\n%s", text)
 	}
 }
