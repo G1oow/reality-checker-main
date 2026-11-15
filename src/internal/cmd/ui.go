@@ -35,11 +35,12 @@ func PrintUIPanelUsage() {
 		"  --threads N              扫描并发（10~2000）",
 		"  --timeout N              单 IP 超时秒数（1~15）",
 		"  --settings FILE          面板设置文件路径",
-		"  --no-tui                 不启动全屏面板，直接以纯文本跑一次扫描（脚本/无终端环境）",
+		"  --no-tui                 不进入菜单，直接以纯文本跑一次扫描（脚本/无终端环境）",
 		"  -h, --help               显示本帮助",
 		"",
-		"面板快捷键:",
-		"  s 开始扫描 · x/esc 停止 · r 重新探测入口 · ↑↓ 选择 · ←→ 改值 · 空格切换开关 · tab 切换焦点 · q 退出",
+		"面板操作（交互式数字菜单，输入编号进入对应设置）:",
+		"  1~13 调整扫描参数与过滤策略 · s 开始扫描 · d 查看上次结果 · r 重新探测出口 · 0 退出",
+		"  扫描中按 Ctrl+C 只停止本次扫描并回到菜单；参数改动后立即保存到设置文件",
 		"",
 		"示例:",
 		fmt.Sprintf("  %s ui                              进入面板，默认按 VPS 入口 IP 的 ASN 发现", appName),
@@ -187,7 +188,7 @@ func (r *RootCmd) executeUI(args []string) {
 		return
 	}
 
-	if err := panel.RunTUI(ctx, deps, settings, settingsPath); err != nil {
+	if err := panel.RunMenu(ctx, deps, settings, settingsPath); err != nil {
 		logger.Linef(logger.IconError, "面板退出", "%s", err.Error())
 	}
 }

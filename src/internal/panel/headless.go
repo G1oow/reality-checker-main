@@ -6,16 +6,12 @@ import (
 	"time"
 
 	"RealityChecker/internal/logger"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
-// RunTUI 启动全屏终端面板（阻塞直到用户退出）
-func RunTUI(ctx context.Context, deps Deps, settings Settings, settingsPath string) error {
-	model := NewModel(ctx, deps, settings, settingsPath)
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
-	_, err := program.Run()
-	return err
+// RunMenu 启动交互式数字菜单面板（阻塞直到用户退出）
+func RunMenu(ctx context.Context, deps Deps, settings Settings, settingsPath string) error {
+	menu := NewMenu(ctx, MenuConfig{Deps: deps, Settings: settings, SettingsPath: settingsPath})
+	return menu.Run()
 }
 
 // RunHeadless 以纯文本方式执行一次扫描（非交互环境 / 脚本兜底）
