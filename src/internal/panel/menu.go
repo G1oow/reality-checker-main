@@ -65,6 +65,10 @@ type MenuConfig struct {
 	Out          io.Writer
 	// Color 为 nil 时按 Out 是否为终端自动判断；显式赋值便于测试固定行为
 	Color *bool
+	// Updater 为 nil 时按当前安装环境构造；测试可注入固定下载源
+	Updater *Updater
+	// Uninstall 为 nil 时按当前运行环境推导；测试可注入临时路径
+	Uninstall *UninstallConfig
 }
 
 // Menu 交互式数字菜单面板
@@ -79,8 +83,10 @@ type Menu struct {
 	tty   bool
 	color bool
 
-	entries []EntryOption
-	probing bool
+	entries   []EntryOption
+	probing   bool
+	updater   *Updater
+	uninstall UninstallConfig
 
 	rows   []Row
 	status Status
@@ -130,6 +136,18 @@ func NewMenu(ctx context.Context, cfg MenuConfig) *Menu {
 		color = false
 	}
 
+	updater := cfg.Updater
+	if updater == nil {
+		updater = NewUpdater()
+	}
+	uninstall := DefaultUninstallConfig(cfg.SettingsPath)
+	if cfg.Uninstall != nil {
+		uninstall = *cfg.Uninstall
+		if strings.TrimSpace(uninstall.SettingsPath) == "" {
+			uninstall.SettingsPath = cfg.SettingsPath
+		}
+	}
+
 	return &Menu{
 		ctx:          ctx,
 		deps:         deps,
@@ -140,6 +158,8 @@ func NewMenu(ctx context.Context, cfg MenuConfig) *Menu {
 		tty:          tty,
 		color:        color,
 		status:       Status{Phase: PhaseIdle, Message: "就绪"},
+		updater:      updater,
+		uninstall:    uninstall,
 	}
 }
 
@@ -182,10 +202,14 @@ func (m *Menu) handle(choice string) {
 		m.showResults()
 	case "r":
 		m.probeEntries()
+	case "u":
+		m.checkUpdate()
+	case "x":
+		m.uninstallPanel()
 	default:
 		item, ok := m.item(choice)
 		if !ok {
-			m.noticef("warn", fmt.Sprintf("无效输入「%s」：请输入 1~%d 的编号，或 s 开始扫描 / d 查看结果 / r 重探出口 / 0 退出", choice, m.itemCount()))
+			m.noticef("warn", fmt.Sprintf("无效输入「%s」：请输入 1~%d 的编号，或 s 开始扫描 / d 查看结果 / r 重探出口 / u 检查更新 / x 卸载 / 0 退出", choice, m.itemCount()))
 			return
 		}
 		item.Edit(m)
@@ -262,6 +286,7 @@ func (m *Menu) render() {
 		builder.WriteString(m.renderGroup(group))
 	}
 	builder.WriteString(m.renderActions())
+	builder.WriteString(m.renderMaintenance())
 	builder.WriteString(m.renderNotice())
 	fmt.Fprint(m.out, builder.String())
 }
@@ -313,7 +338,7 @@ func (m *Menu) renderGroup(group menuGroup) string {
 	return builder.String()
 }
 
-// renderActions 渲染执行区与退出项
+// renderActions 渲染执行区
 func (m *Menu) renderActions() string {
 	var builder strings.Builder
 	builder.WriteString("\n  " + m.cyan("【执行】") + "\n")
@@ -321,6 +346,17 @@ func (m *Menu) renderActions() string {
 		m.green(pad("[s]", menuKeyWidth)), pad("开始扫描", menuLabelWidth),
 		m.green(pad("[d]", menuKeyWidth)), pad("查看上次结果", menuLabelWidth),
 		m.green(pad("[r]", menuKeyWidth)), "重新探测出口"))
+	return builder.String()
+}
+
+// renderMaintenance 渲染维护区与退出项
+func (m *Menu) renderMaintenance() string {
+	var builder strings.Builder
+	builder.WriteString("\n  " + m.cyan("【维护】") + "\n")
+	builder.WriteString(fmt.Sprintf("    %s %s %s\n",
+		m.green(pad("[u]", menuKeyWidth)), pad("检查更新", menuLabelWidth), "从 GitHub Releases 升级主程序"))
+	builder.WriteString(fmt.Sprintf("    %s %s %s\n",
+		m.green(pad("[x]", menuKeyWidth)), pad("卸载程序", menuLabelWidth), "删除程序与快捷指令（需二次确认）"))
 	builder.WriteString("\n  " + m.dim(strings.Repeat("─", menuBoxWidth)) + "\n")
 	builder.WriteString(fmt.Sprintf("    %s %s\n", m.red(pad("[0]", menuKeyWidth)), "退出面板（扫描参数已自动保存）"))
 	return builder.String()
@@ -336,7 +372,7 @@ func (m *Menu) renderNotice() string {
 
 // promptText 返回主菜单输入提示
 func (m *Menu) promptText() string {
-	return "\n  " + m.yellow(fmt.Sprintf("请输入选项 [1-%d / s / d / r / 0]: ", m.itemCount()))
+	return "\n  " + m.yellow(fmt.Sprintf("请输入选项 [1-%d / s / d / r / u / x / 0]: ", m.itemCount()))
 }
 
 // ---- 当前取值 ----
@@ -864,6 +900,137 @@ func (m *Menu) probeEntries() {
 // autoCountry 返回出口探测推断的 VPS 所在国家（优先 IPv6 出口，回退 IPv4）
 func (m *Menu) autoCountry() string {
 	return AutoDiscoveryCountry(m.entries)
+}
+
+// ---- 维护 ----
+
+// checkUpdate 查询最新版本，确认后下载并替换当前程序
+func (m *Menu) checkUpdate() {
+	updater := m.updater
+	if updater == nil {
+		updater = NewUpdater()
+	}
+	m.clearScreen()
+	fmt.Fprintf(m.out, "\n  %s\n", m.cyan("【检查更新】"))
+	fmt.Fprintf(m.out, "  %s\n", m.dim(fmt.Sprintf("当前版本 v%s，正在查询 GitHub Releases…", normalizeVersion(updater.Current))))
+
+	ctx, cancel := context.WithTimeout(m.ctx, 20*time.Second)
+	info, err := updater.Check(ctx)
+	cancel()
+	if err != nil {
+		m.noticef("err", "检查更新失败："+shortError(err))
+		return
+	}
+	if !info.Available {
+		m.noticef("ok", fmt.Sprintf("已是最新版本 v%s", info.Current))
+		return
+	}
+
+	fmt.Fprintf(m.out, "\n  当前版本  %s\n  最新版本  %s\n  下载地址  %s\n",
+		"v"+info.Current, m.green("v"+info.Latest), m.dim(info.URL))
+	if info.Notes != "" {
+		fmt.Fprintf(m.out, "\n  %s\n", m.dim("更新说明："))
+		for index, line := range strings.Split(info.Notes, "\n") {
+			if index >= 6 {
+				fmt.Fprintf(m.out, "    %s\n", m.dim("…"))
+				break
+			}
+			fmt.Fprintf(m.out, "    %s\n", m.dim(strings.TrimSpace(line)))
+		}
+	}
+
+	line, ok := m.readLine("\n  是否下载并安装？下载完成后自动替换当前程序 [y/N]: ")
+	if !ok {
+		m.quit = true
+		return
+	}
+	if !isAffirmative(line) {
+		m.noticef("warn", "已取消更新")
+		return
+	}
+
+	fmt.Fprintf(m.out, "  %s\n", m.dim("正在下载、校验并替换主程序…"))
+	applyCtx, applyCancel := context.WithTimeout(m.ctx, 10*time.Minute)
+	defer applyCancel()
+	if err := updater.Apply(applyCtx, info); err != nil {
+		m.noticef("err", "更新失败："+shortError(err)+"（可重跑 install.sh 覆盖安装）")
+		return
+	}
+	m.noticef("ok", fmt.Sprintf("已更新到 v%s：按 0 退出后重新运行 rcm 生效", info.Latest))
+}
+
+// uninstallPanel 按清单卸载程序（需二次确认），完成后退出面板
+func (m *Menu) uninstallPanel() {
+	targets := BuildUninstallTargets(m.uninstall)
+	if len(targets) == 0 {
+		m.noticef("warn", "未找到可卸载的安装文件（可能已手动清理）")
+		return
+	}
+	basic, deep := splitUninstallTargets(targets)
+
+	m.clearScreen()
+	fmt.Fprintf(m.out, "\n  %s\n\n", m.cyan("【卸载 Reality Checker】"))
+	fmt.Fprintf(m.out, "  %s\n", m.yellow("以下内容将被删除："))
+	for _, target := range basic {
+		fmt.Fprintf(m.out, "    %s %s\n", pad(target.Label, 20), m.dim(target.Path))
+	}
+	if len(deep) > 0 {
+		fmt.Fprintf(m.out, "\n  %s\n", m.yellow("彻底卸载还会删除配置与离线规则库："))
+		for _, target := range deep {
+			fmt.Fprintf(m.out, "    %s %s\n", pad(target.Label, 20), m.dim(target.Path))
+		}
+	}
+	fmt.Fprintf(m.out, "\n  %s\n", m.dim("用户数据（如 data/reality_targets.db）与 systemd 守护进程不会被删除；卸载不可撤销。"))
+
+	line, ok := m.readLine("\n  输入 1 仅卸载程序 / 2 彻底卸载 / 其他取消: ")
+	if !ok {
+		m.quit = true
+		return
+	}
+	var selected []UninstallTarget
+	switch strings.TrimSpace(line) {
+	case "1":
+		selected = basic
+	case "2":
+		selected = append(selected, basic...)
+		selected = append(selected, deep...)
+	default:
+		m.noticef("warn", "已取消卸载")
+		return
+	}
+
+	// 面板通常就在安装目录里运行：先离开当前目录，避免删除后仍引用它
+	if installDir := strings.TrimSpace(m.uninstall.InstallDir); installDir != "" {
+		if cwd, err := os.Getwd(); err == nil && isWithinDir(cwd, installDir) {
+			if err := os.Chdir(os.TempDir()); err == nil {
+				defer func() { _ = os.Chdir(cwd) }()
+			}
+		}
+	}
+	result := RemoveUninstallTargets(selected)
+
+	fmt.Fprintf(m.out, "\n  %s\n", m.cyan("【卸载结果】"))
+	for _, path := range result.Removed {
+		fmt.Fprintf(m.out, "  %s 已删除 %s\n", m.green("✔"), path)
+	}
+	for _, failure := range result.Failed {
+		fmt.Fprintf(m.out, "  %s 删除失败 %s\n", m.red("✖"), failure)
+	}
+	if len(result.Failed) > 0 {
+		fmt.Fprintf(m.out, "  %s\n", m.yellow("部分文件删除失败：请用 root 或安装用户重试，或手动删除上面的路径。"))
+	} else {
+		fmt.Fprintf(m.out, "  %s\n", m.green("卸载完成。"))
+	}
+	m.quit = true
+}
+
+// isAffirmative 判断确认输入是否为同意
+func isAffirmative(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "y", "yes", "是":
+		return true
+	}
+	return false
 }
 
 // ---- 输入输出 ----
