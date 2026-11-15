@@ -489,7 +489,7 @@ func (s *AutoScanner) scanSingleCIDR(
 		443,
 		threads,
 		timeout,
-		false,
+		cidrIsIPv6(cidr),
 		s.limiter,
 		subChan,
 		func(n int, ip string) {
@@ -617,4 +617,16 @@ func CalculateRemainingIPs(cidrs []string, checkpoints map[string]*storage.Check
 
 func ipv4ToUint32(b [4]byte) uint32 {
 	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+}
+
+// cidrIsIPv6 判断待扫描的单个网段或单地址是否为 IPv6
+func cidrIsIPv6(cidr string) bool {
+	value := strings.TrimSpace(cidr)
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return !prefix.Addr().Is4()
+	}
+	if addr, err := netip.ParseAddr(value); err == nil {
+		return !addr.Is4()
+	}
+	return false
 }
