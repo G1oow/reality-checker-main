@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/netip"
 	"strings"
@@ -201,6 +202,12 @@ func (s *AutoScanner) Run(parentCtx context.Context) (*AutoScanResult, error) {
 		}
 	}
 
+	// 随机轮询：打乱网段顺序，避免每次都从列表开头依次推进
+	shuffleCIDRs(s.cidrs)
+	if s.events.OnLog != nil && len(s.cidrs) > 1 {
+		s.events.OnLog(fmt.Sprintf("网段随机轮询：本次按随机顺序扫描 %d 个网段，起点 %s", len(s.cidrs), s.cidrs[0]))
+	}
+
 	remainingIPCount := CalculateRemainingIPs(s.cidrs, s.checkpointsMap)
 
 	// 2. 构造流水线并发通道与任务追踪
@@ -297,6 +304,18 @@ CIDRLoop:
 		IsInterrupted:    isInterrupted,
 		AllCompleted:     false,
 	}, nil
+}
+
+// shuffleCIDRs 打乱网段扫描顺序，实现网段级随机轮询，避免每轮都从列表开头依次推进。
+// 网段内部 IP 仍按地址升序扫描，以维持基于 LastIP 的断点续传语义。
+func shuffleCIDRs(cidrs []string) {
+	if len(cidrs) < 2 {
+		return
+	}
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	rng.Shuffle(len(cidrs), func(i, j int) {
+		cidrs[i], cidrs[j] = cidrs[j], cidrs[i]
+	})
 }
 
 func (s *AutoScanner) processCandidate(ctx context.Context, scanRes *scanner.ScanResult, cancel context.CancelFunc, taskWg *sync.WaitGroup) {

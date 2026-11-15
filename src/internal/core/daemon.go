@@ -126,7 +126,7 @@ func (d *DaemonScheduler) updateASNStatus(asn int, status string, successCountDe
 	}
 }
 
-// PickNextASN 按照双队列优先级算法选取下一个待探测的 ASN
+// PickNextASN 按照双队列优先级 + 池内随机轮询算法选取下一个待探测的 ASN
 func (d *DaemonScheduler) PickNextASN() (*types.ASNRecord, error) {
 	if d.store == nil {
 		return nil, fmt.Errorf("TargetStore 未初始化")
@@ -152,7 +152,7 @@ func (d *DaemonScheduler) PickNextASN() (*types.ASNRecord, error) {
 		return rec, nil
 	}
 
-	// 双队列分层调度：70% 概率优先选择队列 A（高优热门池 priority >= 80）
+	// 双队列分层调度：70% 概率优先选择队列 A（高优热门池 priority >= 80），池内随机轮询
 	if d.randSource.Float64() < d.config.HighPriorityRatio {
 		rec, err := d.store.GetNextPendingASN(80)
 		if err != nil {
@@ -163,7 +163,7 @@ func (d *DaemonScheduler) PickNextASN() (*types.ASNRecord, error) {
 		}
 	}
 
-	// 30% 概率或高优池已无 pending 时，调度队列 B（全量长尾池）
+	// 30% 概率或高优池已无 pending 时，调度队列 B（全量长尾池），池内同样随机轮询
 	return d.store.GetNextPendingASN(0)
 }
 

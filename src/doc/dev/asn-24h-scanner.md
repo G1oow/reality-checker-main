@@ -41,9 +41,11 @@
                ▼                              ▼
      【队列 A：高优热门池】          【队列 B：全网巡检池】
      - 全球 Top 1000 活跃机房/云商  - 全球 80,000+ 活跃有效 ASN
-     - 重点产出、高频率保鲜         - 按 ASN 编号从小到大无休推进
+     - 重点产出、高频率保鲜         - 池内随机轮询无休推进
      - 周期：每 7 ~ 14 天重扫       - 周期：数周持续覆盖全网长尾
 ```
+
+单个 ASN 内部同样是网段级随机轮询：每次任务开扫前打乱网段顺序（网段内部 IP 仍按地址升序，确保基于 `LastIP` 的断点续传语义不变）。
 
 ---
 
@@ -94,6 +96,6 @@ graph TD
 | 阶段 | 目标 | 核心任务清单 | 交付物与形态 |
 | :--- | :--- | :--- | :--- |
 | **Phase 1**<br>数据源与元数据底座 | 建立全球 ASN 任务底座 | 1. 编写离线脚本与更新源，同步全网活跃 ASN 列表；<br>2. 注入 Top 1000 热门云厂商/IDC 权重表；<br>3. 升级 `store.go` 数据库表结构，引入 `asn_registry`。 | `internal/asn/registry.go`<br>全网 ASN 元数据初始化 |
-| **Phase 2**<br>全天候守护与调度引擎 | 实现 24h 自动轮巡与断点续扫 | 1. 研发 `DaemonScheduler`，调度 Pending -> Running -> Completed 状态；<br>2. 实现双队列调度算法（热门优先 + 升序长尾兜底）；<br>3. 增加 CLI 子命令 `reality-checker daemon` 与平滑退出。 | `internal/core/daemon.go`<br>`reality-checker daemon` |
+| **Phase 2**<br>全天候守护与调度引擎 | 实现 24h 自动轮巡与断点续扫 | 1. 研发 `DaemonScheduler`，调度 Pending -> Running -> Completed 状态；<br>2. 实现双队列调度算法（热门优先 + 随机轮询长尾兜底）；<br>3. 增加 CLI 子命令 `reality-checker daemon` 与平滑退出。 | `internal/core/daemon.go`<br>`reality-checker daemon` |
 | **Phase 3**<br>双轨巡检与资产保鲜 | 解决数据老化与淘汰问题 | 1. 研发轻量巡检 Worker（Watchdog），周期复测存量目标；<br>2. 连续失败降级与失效归档（连续 3 次探测失败标记下架）；<br>3. 数据库定期 WAL 检查点整理与碎片清理。 | `internal/core/patrol.go`<br>存量资产健康巡检 |
 | **Phase 4**<br>性能加速与大盘监控 | 吞吐翻倍与可视化运维 | 1. 引入两级 TCP/SYN 预探机制，降低 80% 无效握手；<br>2. 提供轻量 Web Dashboard 或 CLI 实时进度（展示扫描速率、命中率）；<br>3. 提供 RESTful API 供下游订阅面板一键调用。 | Web 状态大盘 / API 服务 |

@@ -865,7 +865,7 @@ func (s *PostgresStore) UpsertASNRecords(records []*types.ASNRecord) error {
 	return nil
 }
 
-// GetNextPendingASN 依据优先级获取下一个待扫描的 ASN 任务
+// GetNextPendingASN 在满足优先级条件的待扫描池中随机轮询一个 ASN 任务
 func (s *PostgresStore) GetNextPendingASN(minPriority int) (*types.ASNRecord, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -874,7 +874,7 @@ func (s *PostgresStore) GetNextPendingASN(minPriority int) (*types.ASNRecord, er
 		SELECT asn, name, country, total_ips, priority, scan_status, last_scanned_at, success_target_count, updated_at
 		FROM asn_registry
 		WHERE scan_status = 'pending' AND priority >= $1
-		ORDER BY priority DESC, total_ips DESC
+		ORDER BY random()
 		LIMIT 1
 	`
 	row := s.pool.QueryRow(ctx, query, minPriority)

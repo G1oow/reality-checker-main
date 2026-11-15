@@ -29,13 +29,13 @@ func TestDaemonScheduler_PickNextASN(t *testing.T) {
 
 	daemon := NewDaemonScheduler(nil, store, nil, nil, cfg, DaemonEvents{})
 
-	// 1. 应优先选择优先级最高的 13335
+	// 1. 高优队列内随机轮询：应命中优先级 >= 80 的池内成员，不会落入长尾的 10001
 	asn1, err := daemon.PickNextASN()
 	if err != nil || asn1 == nil {
 		t.Fatalf("PickNextASN failed: %v", err)
 	}
-	if asn1.ASN != 13335 {
-		t.Errorf("expected 13335, got %d", asn1.ASN)
+	if asn1.ASN != 13335 && asn1.ASN != 16509 {
+		t.Errorf("expected a high priority ASN (13335/16509), got %d", asn1.ASN)
 	}
 
 	// 2. 将 13335 与 16509 标记完成

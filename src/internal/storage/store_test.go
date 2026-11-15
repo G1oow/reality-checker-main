@@ -209,8 +209,8 @@ func TestTargetStore_ASNRegistry(t *testing.T) {
 		t.Fatalf("expected 3 ASNs, got %d (err: %v)", count, err)
 	}
 
-	// 2. 取出最高优先级的 Pending ASN (应为 AS13335)
-	nextASN, err := store.GetNextPendingASN(50)
+	// 2. 阈值 95 下仅 AS13335 满足，取出该 Pending ASN
+	nextASN, err := store.GetNextPendingASN(95)
 	if err != nil || nextASN == nil {
 		t.Fatalf("GetNextPendingASN failed: %v", err)
 	}
@@ -223,8 +223,8 @@ func TestTargetStore_ASNRegistry(t *testing.T) {
 		t.Fatalf("UpdateASNStatus failed: %v", err)
 	}
 
-	// 4. 再取下一个 pending ASN (应为 AS16509)
-	nextASN2, err := store.GetNextPendingASN(50)
+	// 4. 阈值 85 下仅 AS16509 满足，再取下一个 pending ASN
+	nextASN2, err := store.GetNextPendingASN(85)
 	if err != nil || nextASN2 == nil {
 		t.Fatalf("GetNextPendingASN failed: %v", err)
 	}
@@ -277,6 +277,59 @@ func TestTargetStore_ASNRegistry(t *testing.T) {
 	cfAfterReset, _ := store.GetASN(13335)
 	if cfAfterReset.ScanStatus != "completed" {
 		t.Errorf("expected priority 0 CDN to remain completed after ResetAllASNsStatus, got %s", cfAfterReset.ScanStatus)
+	}
+}
+
+// TestTargetStore_GetNextPendingASN_RandomPolling 验证调度选单为池内随机轮询而非固定顺序
+func TestTargetStore_GetNextPendingASN_RandomPolling(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "asn_random.db")
+
+	store, err := NewTargetStore(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TargetStore: %v", err)
+	}
+	defer store.Close()
+
+	// 同一优先级池内放置 4 个 pending ASN：若按固定顺序实现，每次都会返回同一个
+	pendingASNs := []*types.ASNRecord{
+		{ASN: 64501, Name: "Random Pool A", Country: "US", Priority: 90, ScanStatus: "pending"},
+		{ASN: 64502, Name: "Random Pool B", Country: "US", Priority: 90, ScanStatus: "pending"},
+		{ASN: 64503, Name: "Random Pool C", Country: "US", Priority: 90, ScanStatus: "pending"},
+		{ASN: 64504, Name: "Random Pool D", Country: "US", Priority: 90, ScanStatus: "pending"},
+	}
+	if err := store.UpsertASNRecords(pendingASNs); err != nil {
+		t.Fatalf("UpsertASNRecords failed: %v", err)
+	}
+
+	seen := make(map[int]bool)
+	for i := 0; i < 200; i++ {
+		rec, err := store.GetNextPendingASN(0)
+		if err != nil || rec == nil {
+			t.Fatalf("GetNextPendingASN failed: %v", err)
+		}
+		seen[rec.ASN] = true
+	}
+	for _, item := range pendingASNs {
+		if !seen[item.ASN] {
+			t.Errorf("random polling never selected AS%d in 200 picks", item.ASN)
+		}
+	}
+
+	// 优先级阈值过滤仍需生效
+	if err := store.UpsertASNRecords([]*types.ASNRecord{
+		{ASN: 65000, Name: "High Priority Only", Country: "US", Priority: 100, ScanStatus: "pending"},
+	}); err != nil {
+		t.Fatalf("UpsertASNRecords failed: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		rec, err := store.GetNextPendingASN(95)
+		if err != nil || rec == nil {
+			t.Fatalf("GetNextPendingASN failed: %v", err)
+		}
+		if rec.ASN != 65000 {
+			t.Fatalf("expected AS65000 under minPriority=95, got AS%d", rec.ASN)
+		}
 	}
 }
 
