@@ -287,7 +287,9 @@ cd src
 
 产物默认名为 `reality-checker`，需要与安装脚本对齐时用 `APP_NAME=reality-checker-main` 覆盖。构建脚本同时把 `install.sh`、`reasni-daemon.service`、`rcm` 复制进 `dist/`。
 
-**发布流程**：产物不提交进仓库。推 tag（`git tag v1.0.0 && git push origin v1.0.0`）触发 [`.github/workflows/build.yml`](./.github/workflows/build.yml) 构建 Linux 产物并发布 Release，`install.sh` 从 Release 下载。
+**发布流程**：产物不提交进仓库。在 Actions 里运行 [`.github/workflows/build.yml`](./.github/workflows/build.yml) → **Run workflow** 即可，`bump` 选 `auto` / `patch` / `minor` / `major`（`auto` 按 Conventional Commits 推断），或直接填 `version` 指定版本号。这一次运行会依次完成：推算版本 → 回写 `src/internal/version/version.go` → 构建 Linux 产物 → 提交版本号并打 tag → 发布 Release（更新说明由 GitHub 自动生成，分类规则见 [`.github/release.yml`](./.github/release.yml)）。发布必须从 `main` 分支触发。
+
+手动推 tag（`git tag v1.9.0 && git push origin v1.9.0`）仍然兼容，会按 tag 构建并发布，但不再回写版本号。
 
 **架构文档**：源码目录带一套 VitePress 文档站：
 
@@ -328,7 +330,8 @@ pnpm web:dev        # Web 控制台开发服务器
 | `file.csv` | 历史扫描结果样例（已脱敏），可直接 `pipe` 喂入 |
 | `vps-init.sh` | 新 VPS 开荒脚本（公钥/改端口/测速/调优/选目标/建节点，分段幂等） |
 | `src/` | 完整源码：Go 后端 + React 控制台 + VitePress 文档 + `build.sh` |
-| `.github/workflows/build.yml` | 推 tag 自动构建 Linux 产物并发布 Release |
+| `.github/workflows/build.yml` | 一键发布：推算版本号 → 构建 Linux 产物 → 打 tag → 发 Release |
+| `.github/release.yml` | Release 更新说明的自动分类规则 |
 
 ---
 
