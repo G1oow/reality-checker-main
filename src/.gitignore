@@ -3,6 +3,9 @@ reality-checker.exe
 *.exe
 PROJECT_STATUS.md
 
+# 运行时数据目录（下载的 GeoIP 库与资产库）
+/data/
+
 # 系统文件
 .DS_Store
 Thumbs.db
