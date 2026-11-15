@@ -44,14 +44,17 @@ rcm --help     # 查看面板全部选项与快捷键
 
 面板细节（快捷键、过滤项含义、参数持久化、纯文本模式）见 [`src/doc/deploy/tui-panel.md`](./src/doc/deploy/tui-panel.md)。
 
-面板有两个扫描模式：
+面板把扫描分成两步：**发现**（扫 IPv4 网段，从站点证书里挖候选域名）与**校验**（按所选协议族验证候选域名）。
 
-| 模式 | 入口 IP 的来源 | 扫描对象 |
+发现来源：
+
+| 发现来源 | 触发条件 | 扫描对象 |
 |---|---|---|
-| **按 VPS 入口 IP ASN** | 自动探测本机出口 **IPv4 与 IPv6**，分别解析各自 ASN 与国家，由你选择用哪个（或两者） | 该入口所属 ASN 的已公告网段 |
-| **按国家/地区 ASN** | 不需要入口 IP | 在线拉取该国 ASN 清单（RIPE Stat `country-resource-list`），逐个 ASN 拉取网段后扫描 |
+| **按 VPS 入口 IP ASN** | 默认 | 自动探测本机出口 **IPv4 与 IPv6**，取所选入口的 ASN，扫描该 ASN 公告的 **IPv4 网段** |
+| **按国家/地区 ASN** | 「扫描模式」选到国家模式 | 在线拉取该国 ASN 清单（RIPE Stat `country-resource-list`），逐个 ASN 扫描其 **IPv4 网段** |
+| **按 VPS 所在国家 ASN** | 「校验协议族」选「仅 IPv6」时固定使用 | 先用出口探测判定 VPS 所在国家（优先 IPv6 出口，回退 IPv4），再扫该国 ASN 清单的 IPv4 网段；面板里填国家代码可覆盖自动判定 |
 
-> IPv6 提示：只在能逐 IP 枚举的网段上扫描（IPv4 ≥ `/16`、IPv6 ≥ `/112`）。运营商常见的 IPv6 聚合大段（`/32`、`/41` 等）会被跳过并说明原因；若入口 ASN 只公告这类大段，面板会明确报错而不是静默扫 0 个 IP。
+> IPv6 不做地址空间扫描：运营商常见的 IPv6 聚合大段（`/32`、`/41` 等）无法逐 IP 枚举，所以 IPv6 只用于**域名校验**——选「仅 IPv6」时域名必须有 `AAAA` 记录，并用 `tcp6` 完成 TLS 1.3 / HTTP/2 / 证书校验，没有 AAAA 的域名会被剔除并显示原因；本机没有 IPv6 出口时会直接阻止启动，避免空跑。发现阶段只扫 `IPv4 ≥ /16` 的网段，更粗的聚合大段会跳过并说明原因；若某 ASN 完全没有可枚举的 IPv4 网段，面板会直接报错而不是静默扫 0 个 IP。
 
 面板内可以做的事：
 
@@ -72,7 +75,7 @@ rcm --help     # 查看面板全部选项与快捷键
 
 ```bash
 ./reality-checker-main ui --no-tui --mode country --country DE --limit 3
-./reality-checker-main ui --family v6 --limit 1     # 仅用 IPv6 入口，命中 1 个即停
+./reality-checker-main ui --family v6 --limit 1     # 仅 IPv6 校验：按 VPS 所在国家 ASN 的 IPv4 网段发现，命中 1 个即停
 ```
 
 ---
