@@ -67,7 +67,7 @@ func TestFilterByFamily(t *testing.T) {
 func TestEntryPlanBothFamilies(t *testing.T) {
 	options := []EntryOption{
 		entryOption(network.FamilyIPv4, "198.51.100.7", 64500, []string{"198.51.100.0/24"}, true, ""),
-		entryOption(network.FamilyIPv6, "2001:db8::7", 64501, []string{"2001:db8::/32"}, true, ""),
+		entryOption(network.FamilyIPv6, "2001:db8::7", 64501, []string{"2001:db8::/126"}, true, ""),
 	}
 	plan := NewEntryPlan(options, FamilyBoth)
 	if err := plan.Prepare(context.Background()); err != nil {
@@ -96,7 +96,7 @@ func TestEntryPlanBothFamilies(t *testing.T) {
 func TestEntryPlanOnlyV4Selected(t *testing.T) {
 	options := []EntryOption{
 		entryOption(network.FamilyIPv4, "198.51.100.7", 64500, []string{"198.51.100.0/24"}, true, ""),
-		entryOption(network.FamilyIPv6, "2001:db8::7", 64501, []string{"2001:db8::/32"}, true, ""),
+		entryOption(network.FamilyIPv6, "2001:db8::7", 64501, []string{"2001:db8::/126"}, true, ""),
 	}
 	plan := NewEntryPlan(options, FamilyV4)
 	if err := plan.Prepare(context.Background()); err != nil {
@@ -176,7 +176,7 @@ func TestCountryPlanIteratesASNAndFiltersFamily(t *testing.T) {
 		resources: &asn.CountryResources{ASNs: []int{64500, 64501, 64502}},
 		prefixes: map[int][]string{
 			64500: {"198.51.100.0/24"},
-			64501: {"2001:db8::/32"},
+			64501: {"2001:db8::/126"},
 			64502: {"203.0.113.0/24"},
 		},
 		fetchErrors: map[int]error{},
@@ -193,7 +193,7 @@ func TestCountryPlanIteratesASNAndFiltersFamily(t *testing.T) {
 	if batch == nil || batch.ASN != 64501 {
 		t.Fatalf("仅 IPv6 时应命中含 v6 网段的 AS64501，实际 %+v", batch)
 	}
-	if len(batch.CIDRs) != 1 || batch.CIDRs[0] != "2001:db8::/32" {
+	if len(batch.CIDRs) != 1 || batch.CIDRs[0] != "2001:db8::/126" {
 		t.Fatalf("批次网段不正确: %v", batch.CIDRs)
 	}
 	if next, err := plan.Next(context.Background()); err != nil || next != nil {
@@ -262,5 +262,82 @@ func TestEntrySummaryMentionsFamilyAndReason(t *testing.T) {
 	unavailable := entryOption(network.FamilyIPv6, "", 0, nil, false, "无 IPv6 出口")
 	if !strings.Contains(unavailable.Summary(), "不可用") {
 		t.Fatalf("不可用入口应明确标注：%s", unavailable.Summary())
+	}
+}
+
+// containsString 判断字符串切片是否包含目标值
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestScanablePrefixesSkipsOversizeNetworks(t *testing.T) {
+	cidrs := []string{"198.51.100.0/24", "10.0.0.0/8", "2001:db8::/32", "2001:db8::/126", "198.51.100.7", " "}
+	scanable, skipped := scanablePrefixes(cidrs, FamilyBoth)
+
+	if len(scanable) != 3 {
+		t.Fatalf("应保留 3 个可枚举网段，实际 %v", scanable)
+	}
+	for _, want := range []string{"198.51.100.0/24", "2001:db8::/126", "198.51.100.7"} {
+		if !containsString(scanable, want) {
+			t.Fatalf("可枚举网段缺少 %s：%v", want, scanable)
+		}
+	}
+	if len(skipped) != 2 {
+		t.Fatalf("应记录 2 个无法枚举的聚合大段，实际 %v", skipped)
+	}
+	for _, reason := range skipped {
+		if !strings.Contains(reason, "无法逐 IP 枚举") {
+			t.Fatalf("跳过原因应说明不可枚举：%v", skipped)
+		}
+	}
+}
+
+func TestScanablePrefixesHonoursFamily(t *testing.T) {
+	scanable, skipped := scanablePrefixes([]string{"198.51.100.0/24", "2001:db8::/126"}, FamilyV6)
+	if len(scanable) != 1 || scanable[0] != "2001:db8::/126" {
+		t.Fatalf("仅 IPv6 时应只保留 v6 网段，实际 %v", scanable)
+	}
+	if len(skipped) != 0 {
+		t.Fatalf("被协议族过滤掉的网段不应记为异常，实际 %v", skipped)
+	}
+}
+
+func TestEntryPlanRejectsEntryWithoutScannablePrefix(t *testing.T) {
+	options := []EntryOption{
+		entryOption(network.FamilyIPv4, "198.51.100.7", 64500, []string{"198.51.100.0/24"}, true, ""),
+		entryOption(network.FamilyIPv6, "2001:db8::7", 64501, []string{"2001:db8::/32"}, true, ""),
+	}
+	plan := NewEntryPlan(options, FamilyV6)
+	err := plan.Prepare(context.Background())
+	if err == nil {
+		t.Fatalf("仅 IPv6 而该 ASN 只公告聚合大段时应直接报错，而不是静默扫 0 个 IP")
+	}
+	if !strings.Contains(err.Error(), "无法逐 IP 枚举") {
+		t.Fatalf("错误信息应说明不可枚举，实际 %q", err.Error())
+	}
+}
+
+func TestEntryPlanNotesSkippedAggregates(t *testing.T) {
+	options := []EntryOption{
+		entryOption(network.FamilyIPv4, "198.51.100.7", 64500, []string{"10.0.0.0/8", "198.51.100.0/24"}, true, ""),
+	}
+	plan := NewEntryPlan(options, FamilyV4)
+	if err := plan.Prepare(context.Background()); err != nil {
+		t.Fatalf("混合网段时应保留可枚举部分: %v", err)
+	}
+	if !strings.Contains(plan.Stats().Note, "已跳过不可枚举网段") {
+		t.Fatalf("应提示被跳过的聚合大段，实际 %q", plan.Stats().Note)
+	}
+	batch, err := plan.Next(context.Background())
+	if err != nil || batch == nil {
+		t.Fatalf("取批次失败: %v", err)
+	}
+	if len(batch.CIDRs) != 1 || batch.CIDRs[0] != "198.51.100.0/24" {
+		t.Fatalf("批次应只含可枚举网段，实际 %v", batch.CIDRs)
 	}
 }

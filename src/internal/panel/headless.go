@@ -114,7 +114,7 @@ func RunHeadless(
 func reportFinal(okIcon, errIcon string, status Status, rows []Row) {
 	switch status.Phase {
 	case PhaseFailed:
-		logger.Linef(errIcon, "扫描失败", "%s", status.Message)
+		logger.Linef(errIcon, "扫描失败", "%s：%s", status.Message, status.Reason)
 	default:
 		logger.Linef(okIcon, "扫描完成", "%s（命中 %d 个目标，已扫描 %s 个 IP，用时 %s）",
 			status.Message, len(rows), humanInt(status.ScannedIPs), humanDuration(status.Elapsed))

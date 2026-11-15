@@ -164,7 +164,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rows = m.runner.Rows()
 			status := m.runner.Status()
 			if status.Phase == PhaseDone || status.Phase == PhaseStopped || status.Phase == PhaseFailed {
-				m.setStatus(kindForPhase(status.Phase), fmt.Sprintf("%s：%s", status.Phase.Label(), status.Message))
+				m.setStatus(kindForPhase(status.Phase), fmt.Sprintf("%s：%s", status.Phase.Label(), phaseDetail(status)))
 			}
 		}
 		return m, tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg {
@@ -434,6 +434,14 @@ func (m *Model) probeEntriesCmd() tea.Cmd {
 func (m *Model) setStatus(kind, message string) {
 	m.statusKind = kind
 	m.statusMsg = message
+}
+
+// phaseDetail 返回终态说明：失败时附带具体原因，避免只显示“计划准备失败”
+func phaseDetail(status Status) string {
+	if status.Phase == PhaseFailed && status.Reason != "" && status.Reason != status.Message {
+		return fmt.Sprintf("%s（%s）", status.Message, status.Reason)
+	}
+	return status.Message
 }
 
 // kindForPhase 把扫描阶段映射为提示样式

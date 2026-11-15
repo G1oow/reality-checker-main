@@ -3,6 +3,8 @@ package panel
 import (
 	"context"
 	"fmt"
+	"net/netip"
+	"strings"
 
 	"RealityChecker/internal/asn"
 	"RealityChecker/internal/network"
@@ -73,11 +75,63 @@ func filterByFamily(cidrs []string, family FamilyChoice) []string {
 	}
 }
 
+// 可逐 IP 枚举的网段规模上限（按主机位计算），超过则视为无法扫描的聚合大段
+const (
+	maxIPv4HostBits = 16 // /16 及更小网段可枚举
+	maxIPv6HostBits = 16 // /112 及更小网段可枚举
+)
+
+// selectedEntry 已通过协议族与可枚举规模校验的入口
+type selectedEntry struct {
+	option EntryOption
+	cidrs  []string
+}
+
+// scanablePrefixes 按协议族与可枚举规模筛选网段，返回可扫描网段与被跳过的网段说明
+func scanablePrefixes(cidrs []string, family FamilyChoice) (scanable []string, skipped []string) {
+	for _, raw := range filterByFamily(cidrs, family) {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			if _, addrErr := netip.ParseAddr(value); addrErr == nil {
+				scanable = append(scanable, value)
+				continue
+			}
+			skipped = append(skipped, fmt.Sprintf("%s（格式无法解析）", value))
+			continue
+		}
+		limit := maxIPv4HostBits
+		if !prefix.Addr().Is4() {
+			limit = maxIPv6HostBits
+		}
+		hostBits := prefix.Addr().BitLen() - prefix.Bits()
+		if hostBits > limit {
+			skipped = append(skipped, fmt.Sprintf("%s（聚合段含 2^%d 个地址，无法逐 IP 枚举）", prefix.Masked().String(), hostBits))
+			continue
+		}
+		scanable = append(scanable, prefix.Masked().String())
+	}
+	return scanable, skipped
+}
+
+// summarize 截断列表用于单行提示
+func summarize(items []string, max int) []string {
+	if max <= 0 || len(items) <= max {
+		return items
+	}
+	out := make([]string, 0, max+1)
+	out = append(out, items[:max]...)
+	return append(out, fmt.Sprintf("等 %d 项", len(items)))
+}
+
 // EntryPlan 按 VPS 入口 IP 的 ASN 扫描
 type EntryPlan struct {
 	options  []EntryOption
 	family   FamilyChoice
-	selected []EntryOption
+	selected []selectedEntry
 	cursor   int
 	stats    PlanStats
 }
@@ -107,20 +161,31 @@ func (p *EntryPlan) Prepare(_ context.Context) error {
 	}
 
 	unavailable := make([]string, 0, 2)
+	oversize := make([]string, 0, 4)
 	p.selected = p.selected[:0]
 	for _, option := range p.options {
 		if !wanted[option.Family] {
 			continue
 		}
-		if option.Available && option.ASN > 0 && len(option.Prefixes) > 0 {
-			p.selected = append(p.selected, option)
+		if !option.Available || option.ASN <= 0 || len(option.Prefixes) == 0 {
+			reason := option.Err
+			if reason == "" {
+				reason = "不可用"
+			}
+			unavailable = append(unavailable, fmt.Sprintf("%s（%s）", option.Family, reason))
 			continue
 		}
-		reason := option.Err
-		if reason == "" {
-			reason = "不可用"
+		cidrs, skipped := scanablePrefixes(option.Prefixes, p.family)
+		if len(cidrs) == 0 {
+			reason := "该 ASN 没有可逐 IP 枚举的网段"
+			if len(skipped) > 0 {
+				reason = joinStrings(summarize(skipped, 2), "、")
+			}
+			unavailable = append(unavailable, fmt.Sprintf("%s %s（%s）", option.Family, option.ASNLabel(), reason))
+			continue
 		}
-		unavailable = append(unavailable, fmt.Sprintf("%s（%s）", option.Family, reason))
+		oversize = append(oversize, skipped...)
+		p.selected = append(p.selected, selectedEntry{option: option, cidrs: cidrs})
 	}
 
 	if len(p.selected) == 0 {
@@ -131,9 +196,14 @@ func (p *EntryPlan) Prepare(_ context.Context) error {
 	}
 
 	p.stats.BatchesTotal = len(p.selected)
+	notes := make([]string, 0, 2)
 	if len(unavailable) > 0 {
-		p.stats.Note = "已跳过不可用出口：" + joinStrings(unavailable, "、")
+		notes = append(notes, "已跳过不可用出口："+joinStrings(unavailable, "、"))
 	}
+	if len(oversize) > 0 {
+		notes = append(notes, "已跳过不可枚举网段："+joinStrings(summarize(oversize, 3), "、"))
+	}
+	p.stats.Note = joinStrings(notes, "；")
 	return nil
 }
 
@@ -142,24 +212,15 @@ func (p *EntryPlan) Next(_ context.Context) (*Batch, error) {
 	if p.cursor >= len(p.selected) {
 		return nil, nil
 	}
-	option := p.selected[p.cursor]
+	entry := p.selected[p.cursor]
 	p.cursor++
 	p.stats.BatchesDone = p.cursor
 
-	cidrs := filterByFamily(option.Prefixes, p.family)
-	if len(cidrs) == 0 {
-		return &Batch{
-			Label:   fmt.Sprintf("%s / %s", option.Family, option.ASNLabel()),
-			ASN:     option.ASN,
-			Country: option.CountryCode,
-			CIDRs:   nil,
-		}, nil
-	}
 	return &Batch{
-		Label:   fmt.Sprintf("%s / %s", option.Family, option.ASNLabel()),
-		ASN:     option.ASN,
-		Country: option.CountryCode,
-		CIDRs:   cidrs,
+		Label:   fmt.Sprintf("%s / %s", entry.option.Family, entry.option.ASNLabel()),
+		ASN:     entry.option.ASN,
+		Country: entry.option.CountryCode,
+		CIDRs:   entry.cidrs,
 	}, nil
 }
 
@@ -247,9 +308,12 @@ func (p *CountryPlan) Next(ctx context.Context) (*Batch, error) {
 			p.recordSkip(fmt.Sprintf("%s（%s）", resource, shortError(err)))
 			continue
 		}
-		cidrs := filterByFamily(prefixes, p.family)
+		cidrs, skipped := scanablePrefixes(prefixes, p.family)
+		for _, reason := range skipped {
+			p.recordSkip(reason)
+		}
 		if len(cidrs) == 0 {
-			p.recordSkip(fmt.Sprintf("%s（无匹配网段）", resource))
+			p.recordSkip(fmt.Sprintf("%s（无可逐 IP 枚举的网段）", resource))
 			continue
 		}
 		return &Batch{
