@@ -14,10 +14,11 @@ import (
 
 // DataFile 数据文件配置
 type DataFile struct {
-	Name         string
-	URL          string
-	FallbackURLs []string
-	LocalPath    string
+	Name          string
+	URL           string
+	FallbackURLs  []string
+	LocalPath     string
+	EmbeddedAsset string // 内置回退资源文件名（internal/data/assets 下），为空表示无内置回退
 }
 
 // Downloader 数据文件下载器
@@ -49,7 +50,9 @@ func (d *Downloader) EnsureDataFiles() error {
 		logger.Info("数据文件下载：经代理 %s", d.proxyURL)
 	}
 
-	// 定义需要下载的数据文件（静态规则 cdn_keywords/hot_websites/exclude_rules 已通过 go:embed 内置，无需远程下载）
+	// 定义需要远程刷新的数据文件：GeoIP 数据库 + 规则/词库。
+	// 规则文件（cdn_keywords/hot_websites/exclude_rules/gfwlist）优先从远程拉取并按 TTL 刷新，
+	// 拉取失败时回退释放编译期内置资源（internal/data/assets）。
 	files := []DataFile{
 		{
 			Name: "Country.mmdb",
@@ -57,7 +60,45 @@ func (d *Downloader) EnsureDataFiles() error {
 			FallbackURLs: []string{
 				"https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb",
 			},
-			LocalPath: "data/Country.mmdb",
+			LocalPath:     "data/Country.mmdb",
+			EmbeddedAsset: "Country.mmdb",
+		},
+		{
+			Name: "cdn_keywords.txt",
+			URL:  "https://raw.githubusercontent.com/G1oow/reality-checker-main/main/data/cdn_keywords.txt",
+			FallbackURLs: []string{
+				"https://raw.githubusercontent.com/G1oow/reality-checker-main/master/data/cdn_keywords.txt",
+			},
+			LocalPath:     "data/cdn_keywords.txt",
+			EmbeddedAsset: "cdn_keywords.txt",
+		},
+		{
+			Name: "hot_websites.txt",
+			URL:  "https://raw.githubusercontent.com/G1oow/reality-checker-main/main/data/hot_websites.txt",
+			FallbackURLs: []string{
+				"https://raw.githubusercontent.com/G1oow/reality-checker-main/master/data/hot_websites.txt",
+			},
+			LocalPath:     "data/hot_websites.txt",
+			EmbeddedAsset: "hot_websites.txt",
+		},
+		{
+			Name: "exclude_rules.txt",
+			URL:  "https://raw.githubusercontent.com/G1oow/reality-checker-main/main/data/exclude_rules.txt",
+			FallbackURLs: []string{
+				"https://raw.githubusercontent.com/G1oow/reality-checker-main/master/data/exclude_rules.txt",
+			},
+			LocalPath:     "data/exclude_rules.txt",
+			EmbeddedAsset: "exclude_rules.txt",
+		},
+		{
+			// gfwlist.conf 实际内容为 Clash reject 规则（payload 段 + "- '+.domain'"）
+			Name: "gfwlist.conf",
+			URL:  "https://raw.githubusercontent.com/Loyalsoldier/clash-rules/release/reject.txt",
+			FallbackURLs: []string{
+				"https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/reject.txt",
+			},
+			LocalPath:     "data/gfwlist.conf",
+			EmbeddedAsset: "gfwlist.conf",
 		},
 	}
 
@@ -96,16 +137,8 @@ func (d *Downloader) ensureFile(file DataFile) error {
 	if !exists {
 		logger.Step("下载数据文件：%s", file.Name)
 		if err := d.downloadWithRetry(file); err != nil {
-			if file.Name == "Country.mmdb" {
-				if embData, embErr := GetEmbeddedCountryMMDB(); embErr == nil && len(embData) > 0 {
-					logger.Warn("内置版本回退：%s 下载失败，已释放内置版本至 %s", file.Name, file.LocalPath)
-					writeErr := os.WriteFile(file.LocalPath, embData, 0644)
-					if writeErr == nil {
-						return nil
-					}
-					logger.Warn("内置版本写入失败：%s → %s（%v），将继续在内存中使用内置版本", file.Name, file.LocalPath, writeErr)
-					return nil
-				}
+			if releaseEmbeddedAsset(file, err) {
+				return nil
 			}
 			return err
 		}
@@ -118,7 +151,7 @@ func (d *Downloader) ensureFile(file DataFile) error {
 		return fmt.Errorf("检查文件 %s 更新时间失败: %v", file.Name, err)
 	}
 
-	// 如果需要更新，下载新文件
+	// 如果需要更新，下载新文件；失败时保留现有本地文件（可能是用户自定义规则），仅告警
 	if needsUpdate {
 		logger.Step("更新数据文件：%s", file.Name)
 		if err := d.downloadWithRetry(file); err != nil {
@@ -127,6 +160,63 @@ func (d *Downloader) ensureFile(file DataFile) error {
 		}
 	}
 
+	return nil
+}
+
+// releaseEmbeddedAsset 将内置资源释放到 file.LocalPath（先写临时文件再 rename，保证原子性）。
+// 返回 true 表示已按内置版本回退，调用方应视为成功；返回 false 表示没有可用的内置资源。
+func releaseEmbeddedAsset(file DataFile, cause error) bool {
+	assetName := embeddedAssetName(file)
+	if assetName == "" {
+		return false
+	}
+	content, err := assetsFS.ReadFile("assets/" + assetName)
+	if err != nil {
+		return false
+	}
+
+	logger.Warn("内置版本回退：%s 获取失败（%v），已回退内置版本至 %s", file.Name, cause, file.LocalPath)
+	if err := writeFileAtomic(file.LocalPath, content, 0644); err != nil {
+		logger.Warn("内置版本写入失败：%s → %s（%v），将继续使用内置版本", file.Name, file.LocalPath, err)
+	}
+	return true
+}
+
+// hasEmbeddedAsset 判断指定内置资源是否随当前构建打包
+func hasEmbeddedAsset(assetName string) bool {
+	if assetName == "" {
+		return false
+	}
+	content, err := assetsFS.ReadFile("assets/" + assetName)
+	return err == nil && len(content) > 0
+}
+
+// embeddedAssetName 解析该数据文件可用的内置资源名：
+// 优先使用 EmbeddedAsset；未显式配置时回退到与 Name 同名的内置资源（兼容仅设置 Name 的旧配置）。
+func embeddedAssetName(file DataFile) string {
+	if file.EmbeddedAsset != "" {
+		if hasEmbeddedAsset(file.EmbeddedAsset) {
+			return file.EmbeddedAsset
+		}
+		return ""
+	}
+	if hasEmbeddedAsset(file.Name) {
+		return file.Name
+	}
+	return ""
+}
+
+// writeFileAtomic 通过临时文件 + rename 原子写入文件
+func writeFileAtomic(path string, content []byte, perm os.FileMode) error {
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, content, perm); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
 	return nil
 }
 
@@ -177,7 +267,7 @@ func (d *Downloader) downloadWithRetry(file DataFile) error {
 	}
 
 	// 如果有内置版本可回退，则不在此打印手动下载说明（由调用方回退内置版本并提示）
-	if file.Name == "Country.mmdb" && HasEmbeddedCountryMMDB() {
+	if embeddedAssetName(file) != "" {
 		return fmt.Errorf("下载 %s 失败，已重试 %d 次", file.Name, d.retries)
 	}
 

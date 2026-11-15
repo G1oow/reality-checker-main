@@ -139,18 +139,19 @@ func executeASN(args []string) {
 
 	db := container.GetGeoIP()
 	if db == nil {
-		logger.Error("GeoIP 库加载失败：%s 不可用", *dbPath)
-		return
+		logger.Warn("本地 GeoIP 库不可用（%s）：国家过滤将只依赖 RIPE 在线国家前缀集合", *dbPath)
 	}
 
-	prefixes, err := asnclient.NewClientWithProxy(proxyURL).FetchPrefixes(context.Background(), flags.Arg(0))
+	asnClient := asnclient.NewClientWithProxy(proxyURL)
+	prefixes, err := asnClient.FetchPrefixes(context.Background(), flags.Arg(0))
 	if err != nil {
 		logger.Error("ASN 查询失败：%v", err)
 		return
 	}
-	filtered, err := asnclient.FilterByCountry(prefixes, db, country)
-	if err != nil {
-		logger.Error("国家过滤失败：%v", err)
+	resolver := asnclient.NewCountryResolver(asnClient, db)
+	filtered, source := resolver.FilterPrefixes(context.Background(), prefixes, country)
+	if source == asnclient.CountrySourceNone {
+		logger.Error("国家过滤失败：RIPE 国家前缀集合与本地 GeoIP 均无可用归属数据")
 		return
 	}
 	filtered = asnclient.FilterIPVersion(filtered, *ipv4Only, *ipv6Only)
