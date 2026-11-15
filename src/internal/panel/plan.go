@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net/netip"
 	"strings"
 
@@ -109,6 +110,18 @@ func scanablePrefixes(cidrs []string) (scanable []string, skipped []string) {
 		scanable = append(scanable, prefix.Masked().String())
 	}
 	return scanable, skipped
+}
+
+// shuffledASNs 返回打乱顺序的 ASN 副本，用于国家模式的随机轮询；不改动入参。
+func shuffledASNs(asns []int) []int {
+	out := append([]int(nil), asns...)
+	if len(out) < 2 {
+		return out
+	}
+	rand.Shuffle(len(out), func(i, j int) {
+		out[i], out[j] = out[j], out[i]
+	})
+	return out
 }
 
 // summarize 截断列表用于单行提示
@@ -240,7 +253,7 @@ const (
 	QueueVPSCountryASN = "VPS 所在国家 ASN 队列"
 )
 
-// CountryPlan 按国家/地区的 ASN 清单依次扫描（发现恒用各 ASN 的 IPv4 网段）
+// CountryPlan 按国家/地区的 ASN 清单随机轮询扫描（发现恒用各 ASN 的 IPv4 网段）
 type CountryPlan struct {
 	fetcher   CountryClient
 	country   string
@@ -297,6 +310,8 @@ func (p *CountryPlan) Prepare(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// 随机轮询：打乱 ASN 顺序（副本），避免每次扫描都从编号最小的 ASN 开始
+	resources.ASNs = shuffledASNs(resources.ASNs)
 	p.resources = resources
 	p.stats.Country = resources.Country
 	p.stats.CountryASNs = len(resources.ASNs)
