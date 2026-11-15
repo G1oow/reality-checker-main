@@ -260,25 +260,26 @@ func TestCountryPlanIteratesASNAndSkipsIPv6Only(t *testing.T) {
 		t.Fatalf("队列名应为 %s，实际 %q", QueueVPSCountryASN, stats.QueueName)
 	}
 
-	batch, err := plan.Next(context.Background())
-	if err != nil {
-		t.Fatalf("取批次失败: %v", err)
+	// ASN 顺序随机，但可扫描的每个 ASN 必须恰好出现一次，只公告 IPv6 的被跳过
+	got := make(map[int]string)
+	for {
+		batch, err := plan.Next(context.Background())
+		if err != nil {
+			t.Fatalf("取批次失败: %v", err)
+		}
+		if batch == nil {
+			break
+		}
+		if len(batch.CIDRs) != 1 {
+			t.Fatalf("发现阶段应只取 IPv4 网段，实际 %+v", batch)
+		}
+		got[batch.ASN] = batch.CIDRs[0]
 	}
-	if batch == nil || batch.ASN != 64500 || len(batch.CIDRs) != 1 || batch.CIDRs[0] != "198.51.100.0/24" {
-		t.Fatalf("发现阶段应只取 IPv4 网段，实际 %+v", batch)
-	}
-	next, err := plan.Next(context.Background())
-	if err != nil {
-		t.Fatalf("取批次失败: %v", err)
-	}
-	if next == nil || next.ASN != 64502 {
-		t.Fatalf("只公告 IPv6 的 ASN 应被跳过，实际 %+v", next)
+	if len(got) != 2 || got[64500] != "198.51.100.0/24" || got[64502] != "203.0.113.0/24" {
+		t.Fatalf("应扫描 64500 与 64502 的 IPv4 网段，实际 %+v", got)
 	}
 	if stats := plan.Stats(); !strings.Contains(strings.Join(stats.Skipped, " | "), "IPv6") {
 		t.Fatalf("应记录被跳过的 IPv6 段，实际 %+v", stats.Skipped)
-	}
-	if last, err := plan.Next(context.Background()); err != nil || last != nil {
-		t.Fatalf("队列应已结束: %v %+v", err, last)
 	}
 }
 
@@ -294,19 +295,30 @@ func TestCountryPlanSkipsFetchErrors(t *testing.T) {
 	if err := plan.Prepare(context.Background()); err != nil {
 		t.Fatalf("准备失败: %v", err)
 	}
-	batch, err := plan.Next(context.Background())
-	if err != nil {
-		t.Fatalf("查询失败应被跳过而不是中断整轮扫描: %v", err)
+	var batches []*Batch
+	for {
+		batch, err := plan.Next(context.Background())
+		if err != nil {
+			t.Fatalf("查询失败应被跳过而不是中断整轮扫描: %v", err)
+		}
+		if batch == nil {
+			break
+		}
+		batches = append(batches, batch)
 	}
-	if batch == nil || batch.ASN != 64501 {
-		t.Fatalf("应继续扫描后续 ASN，实际 %+v", batch)
+	if len(batches) != 1 || batches[0].ASN != 64501 {
+		t.Fatalf("应只扫描查询成功的 AS64501，实际 %+v", batches)
 	}
 	stats := plan.Stats()
 	if len(stats.Skipped) != 1 || !strings.Contains(stats.Skipped[0], "AS64500") {
 		t.Fatalf("应记录被跳过的 ASN，实际 %+v", stats.Skipped)
 	}
-	if len(client.fetchCalls) != 2 {
-		t.Fatalf("应按顺序查询两个 ASN，实际 %v", client.fetchCalls)
+	queried := make(map[string]bool, len(client.fetchCalls))
+	for _, call := range client.fetchCalls {
+		queried[call] = true
+	}
+	if len(client.fetchCalls) != 2 || !queried["AS64500"] || !queried["AS64501"] {
+		t.Fatalf("应查询全部两个 ASN，实际 %v", client.fetchCalls)
 	}
 }
 
@@ -370,5 +382,59 @@ func TestEntryPlanNotesSkippedAggregates(t *testing.T) {
 	}
 	if len(batch.CIDRs) != 1 || batch.CIDRs[0] != "198.51.100.0/24" {
 		t.Fatalf("批次应只含可枚举网段，实际 %v", batch.CIDRs)
+	}
+}
+
+func TestCountryPlanRandomizesASNOrder(t *testing.T) {
+	asnNumbers := []int{64500, 64501, 64502, 64503, 64504, 64505}
+	prefixes := make(map[int][]string, len(asnNumbers))
+	for _, number := range asnNumbers {
+		prefixes[number] = []string{"198.51.100.0/24"}
+	}
+	sharedASNs := append([]int(nil), asnNumbers...)
+	client := &fakeCountryClient{
+		resources:   &asn.CountryResources{ASNs: sharedASNs},
+		prefixes:    prefixes,
+		fetchErrors: map[int]error{},
+	}
+
+	firstSeen := make(map[int]bool)
+	for round := 0; round < 20; round++ {
+		plan := NewCountryPlan(client, "DE", "")
+		if err := plan.Prepare(context.Background()); err != nil {
+			t.Fatalf("准备失败: %v", err)
+		}
+
+		order := make([]int, 0, len(asnNumbers))
+		for {
+			batch, err := plan.Next(context.Background())
+			if err != nil {
+				t.Fatalf("取批次失败: %v", err)
+			}
+			if batch == nil {
+				break
+			}
+			order = append(order, batch.ASN)
+		}
+		if len(order) != len(asnNumbers) {
+			t.Fatalf("单轮应恰好扫描 %d 个 ASN，实际 %v", len(asnNumbers), order)
+		}
+		seen := make(map[int]bool, len(order))
+		for _, number := range order {
+			if seen[number] {
+				t.Fatalf("ASN %d 在单轮中重复出现：%v", number, order)
+			}
+			seen[number] = true
+		}
+		firstSeen[order[0]] = true
+	}
+
+	if len(firstSeen) < 2 {
+		t.Fatalf("20 轮扫描的起始 ASN 始终相同，未实现随机轮询: %v", firstSeen)
+	}
+	for i, number := range asnNumbers {
+		if sharedASNs[i] != number {
+			t.Fatalf("随机化不应改动上游清单：期望 %v，实际 %v", asnNumbers, sharedASNs)
+		}
 	}
 }
