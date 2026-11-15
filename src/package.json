@@ -1,6 +1,6 @@
 {
   "name": "reality-checker-docs",
-  "version": "1.0.0",
+  "version": "1.7.0",
   "description": "RealityChecker 官方与架构开发文档",
   "private": true,
   "scripts": {
