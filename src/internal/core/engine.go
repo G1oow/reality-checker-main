@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/network"
 	"RealityChecker/internal/types"
 )
@@ -68,7 +69,7 @@ func (e *Engine) Stop() error {
 
 	// 停止连接管理器
 	if err := e.connections.Stop(); err != nil {
-		fmt.Printf("停止连接管理器失败: %v\n", err)
+		logger.Error("连接管理器停止失败：%v", err)
 	}
 
 	e.running = false

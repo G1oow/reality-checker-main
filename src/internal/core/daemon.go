@@ -117,7 +117,7 @@ func (d *DaemonScheduler) reportError(err error) {
 		d.events.OnError(err)
 		return
 	}
-	d.log("❌ %v", err)
+	d.log("调度错误：%v", err)
 }
 
 func (d *DaemonScheduler) updateASNStatus(asn int, status string, successCountDelta int) {
@@ -169,26 +169,26 @@ func (d *DaemonScheduler) PickNextASN() (*types.ASNRecord, error) {
 
 // Start 启动 24 小时全网扫描循环主流程
 func (d *DaemonScheduler) Start(ctx context.Context) error {
-	d.log("🚀 24小时全天候 ASN 全网扫描调度引擎启动中...")
+	d.log("调度引擎启动：24 小时全天候 ASN 全网扫描")
 
 	// 1. 系统重启或崩溃自愈：将异常残留的 scanning 状态全部回滚为 pending
 	if err := d.store.ResetScanningASNs(); err != nil {
-		d.log("⚠️ 重置残留 scanning 任务失败: %v", err)
+		d.log("状态重置失败：残留 scanning 任务（%v）", err)
 	} else {
-		d.log("🔄 已完成历史 scanning 任务状态自愈检查。")
+		d.log("状态自愈完成：历史 scanning 任务已校正")
 	}
 
 	// 2. 检查并确保 ASN 注册表基础底座存在数据
 	mgr := asnclient.NewRegistryManager(d.store)
 	if _, err := mgr.EnsureRegistrySeeded(); err != nil {
-		d.log("⚠️ 检查 ASN 种子数据异常: %v", err)
+		d.log("种子数据检查失败：%v", err)
 	}
 
 	// 3. 循环轮巡推进调度
 	for {
 		select {
 		case <-ctx.Done():
-			d.log("🛑 调度引擎收到停止信号，正在平稳退出...")
+			d.log("调度引擎停止：收到停止信号，正在平稳退出")
 			return nil
 		default:
 		}
@@ -196,7 +196,7 @@ func (d *DaemonScheduler) Start(ctx context.Context) error {
 		// 挑选下一个待扫描 ASN
 		asnRec, err := d.PickNextASN()
 		if err != nil {
-			d.log("❌ 获取待扫描 ASN 失败: %v", err)
+			d.log("待扫描 ASN 查询失败：%v", err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
@@ -204,11 +204,11 @@ func (d *DaemonScheduler) Start(ctx context.Context) error {
 		// 若当前无待扫描的 ASN（说明全网所有已注册 ASN 均已扫描完毕）
 		if asnRec == nil {
 			if !d.config.Continuous {
-				d.log("✅ 全网所有已注册 ASN 均已完成扫描。守护进程退出。")
+				d.log("全网扫描完成：所有已注册 ASN 均已扫描，守护进程退出")
 				return nil
 			}
 
-			d.log("🎉 本轮全网 ASN 扫描已全部完成！休眠 %v 后自动开启新一轮全网资产保鲜轮巡...", d.config.CycleInterval)
+			d.log("本轮全网扫描完成：休眠 %v 后开启新一轮资产保鲜轮巡", d.config.CycleInterval)
 			select {
 			case <-ctx.Done():
 				return nil
@@ -217,7 +217,7 @@ func (d *DaemonScheduler) Start(ctx context.Context) error {
 
 			// 重置所有 completed 状态为 pending，开启下一轮大循环
 			if err := d.store.ResetAllASNsStatus(); err != nil {
-				d.log("❌ 重置 ASN 状态失败: %v", err)
+				d.log("ASN 状态重置失败：%v", err)
 			}
 			continue
 		}
@@ -225,12 +225,12 @@ func (d *DaemonScheduler) Start(ctx context.Context) error {
 		// 执行单个 ASN 的自动化全量扫描
 		if err := d.processASN(ctx, asnRec); err != nil {
 			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-				d.log("🛑 任务在执行 AS%d 时被中断，断点已安全持久化。", asnRec.ASN)
+				d.log("任务中断：执行 AS%d 时被中断，断点已持久化", asnRec.ASN)
 				// 将当前未扫完的 ASN 重新退回 pending，便于下次秒级衔接
 				d.updateASNStatus(asnRec.ASN, "pending", 0)
 				return nil
 			}
-			d.log("⚠️ 扫描 AS%d 出现异常: %v", asnRec.ASN, err)
+			d.log("AS%d 扫描异常：%v", asnRec.ASN, err)
 		}
 	}
 }
@@ -241,12 +241,12 @@ func (d *DaemonScheduler) processASN(ctx context.Context, rec *types.ASNRecord) 
 
 	// 0. CDN 基础设施拦截：纯商业 CDN 自治系统 (如 Cloudflare, Fastly, Akamai 等) 不适用于 REALITY 伪装，自动跳过并标记完成
 	if isCDN, cdnName := asnclient.IsPureCDNASN(rec.ASN, rec.Name); isCDN {
-		d.log("ℹ️ %s [%s] 属于纯商业 CDN 基础设施 (%s)，依据 REALITY 非 CDN 策略自动跳过并标记完成", asnStr, rec.Name, cdnName)
+		d.log("%s [%s] 为纯商业 CDN 基础设施（%s），按 REALITY 非 CDN 策略跳过并标记完成", asnStr, rec.Name, cdnName)
 		d.updateASNStatus(rec.ASN, "completed", 0)
 		return nil
 	}
 
-	d.log("📡 开始调度 %s [%s] (国家: %s, 权重: %d)...", asnStr, rec.Name, rec.Country, rec.Priority)
+	d.log("调度开始：%s [%s] 国家 %s、权重 %d", asnStr, rec.Name, rec.Country, rec.Priority)
 
 	// 标记为正在扫描
 	d.updateASNStatus(rec.ASN, "scanning", 0)
@@ -255,7 +255,7 @@ func (d *DaemonScheduler) processASN(ctx context.Context, rec *types.ASNRecord) 
 	// 1. 通过 RIPE Stat 查询公布的前缀
 	prefixes, err := d.asnClient.FetchPrefixes(ctx, asnStr)
 	if err != nil {
-		d.log("⚠️ 获取 %s 的公告 CIDR 失败: %v，跳过本自治系统", asnStr, err)
+		d.log("网段拉取失败：%s 的公告 CIDR（%v），跳过本自治系统", asnStr, err)
 		d.updateASNStatus(rec.ASN, "completed", 0)
 		return nil
 	}
@@ -275,13 +275,13 @@ func (d *DaemonScheduler) processASN(ctx context.Context, rec *types.ASNRecord) 
 	// 3. IPv4 / IPv6 过滤
 	prefixes = asnclient.FilterIPVersion(prefixes, d.config.IPv4Only, d.config.IPv6Only)
 	if len(prefixes) == 0 {
-		d.log("ℹ️ %s 没有符合 IP 版本/国家过滤的 CIDR 前缀，标记完成", asnStr)
+		d.log("%s 无符合 IP 版本或国家过滤的网段，标记完成", asnStr)
 		d.updateASNStatus(rec.ASN, "completed", 0)
 		return nil
 	}
 
 	totalIPs := CalculateTotalIPs(prefixes)
-	d.log("🔍 %s 解析出 %d 个有效网段，覆盖约 %d 个 IP", asnStr, len(prefixes), totalIPs)
+	d.log("%s 解析出 %d 个有效网段，覆盖约 %d 个 IP", asnStr, len(prefixes), totalIPs)
 
 	if d.events.OnASNStart != nil {
 		d.events.OnASNStart(rec, len(prefixes), totalIPs)
@@ -358,7 +358,7 @@ func (d *DaemonScheduler) processASN(ctx context.Context, rec *types.ASNRecord) 
 
 	if scanErr != nil {
 		if errors.Is(scanErr, ErrAllCompleted) {
-			d.log("✅ %s 的所有网段此前已完成扫描！", asnStr)
+			d.log("%s 的所有网段此前已完成扫描", asnStr)
 			d.updateASNStatus(rec.ASN, "completed", 0)
 			return nil
 		}
@@ -385,7 +385,7 @@ func (d *DaemonScheduler) processASN(ctx context.Context, rec *types.ASNRecord) 
 		d.reportError(fmt.Errorf("清理 AS%d 扫描断点失败: %w", rec.ASN, err))
 	}
 
-	d.log("✨ %s 扫描完成！耗时: %v, 新发现优质 REALITY 目标: %d 个", asnStr, duration.Round(time.Second), foundCount)
+	d.log("%s 扫描完成：耗时 %v，新增目标 %d 个", asnStr, duration.Round(time.Second), foundCount)
 
 	if d.events.OnASNComplete != nil {
 		d.events.OnASNComplete(rec, foundCount, duration)

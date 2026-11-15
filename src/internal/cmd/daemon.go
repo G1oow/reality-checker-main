@@ -23,6 +23,9 @@ import (
 func (r *RootCmd) executeDaemon(args []string) {
 	flags := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
+	flags.Usage = func() {
+		PrintCommandUsage("daemon [选项]", "启动全网 ASN 自动扫描守护进程（可选内置 HTTP 服务）", flags)
+	}
 
 	storePath := flags.String("store", "data/reality_targets.db", "SQLite 目标与 ASN 数据库路径")
 	dbPath := flags.String("db", "data/Country.mmdb", "GeoIP 国家数据库路径")
@@ -48,11 +51,11 @@ func (r *RootCmd) executeDaemon(args []string) {
 		return
 	}
 
-	logger.PrintTimestampedMessage("正在初始化 24小时 ASN 全网扫描守护进程...")
+	logger.Step("守护进程启动：24 小时 ASN 全网扫描")
 	if r.config == nil || r.config.LoadedConfigFile == "" {
-		logger.PrintTimestampedMessage("未加载配置文件，将使用内置默认配置")
+		logger.Info("配置：未加载配置文件，使用内置默认值")
 	} else {
-		logger.PrintTimestampedMessage("已加载配置文件: %s", r.config.LoadedConfigFile)
+		logger.Linef(logger.IconStep, "配置", "已加载 %s", r.config.LoadedConfigFile)
 	}
 
 	// 1. 初始化统一应用依赖容器
@@ -62,18 +65,17 @@ func (r *RootCmd) executeDaemon(args []string) {
 		ExplicitMMDB: *dbPath,
 	})
 	if err != nil {
-		logger.PrintError(fmt.Sprintf("初始化应用容器失败: %v", err))
+		logger.Error("容器初始化失败：%v", err)
 		return
 	}
 	defer container.Close()
 
 	store, err := container.GetStore()
 	if err != nil {
-		logger.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
+		logger.Error("资产库打开失败：%v", err)
 		return
 	}
-	logger.PrintTimestampedMessage("数据库已连接: backend=%T, 当前 target 数=%d, 扫描代理启用=%t",
-		store, store.Count(), r.config != nil && r.config.Proxy.Scanner)
+	logger.Linef(logger.IconDetail, "资产库", "后端 %T、目标 %d 个、扫描代理 %t", store, store.Count(), r.config != nil && r.config.Proxy.Scanner)
 	geoipReader := container.GetGeoIP()
 	scannerEngine := container.GetScanner()
 
@@ -82,7 +84,7 @@ func (r *RootCmd) executeDaemon(args []string) {
 	if !*noHTTP && *portFlag > 0 {
 		provService, err := container.GetProvisionService()
 		if err != nil {
-			logger.PrintError(fmt.Sprintf("初始化内置 HTTP 供给服务失败: %v", err))
+			logger.Error("供给服务初始化失败：%v", err)
 		} else {
 			apiToken := *tokenFlag
 			if apiToken == "" {
@@ -105,9 +107,9 @@ func (r *RootCmd) executeDaemon(args []string) {
 				if apiToken != "" {
 					tokenDesc = "已启用"
 				}
-				logger.PrintTimestampedMessage("🌐 [Daemon] 内置 Web 控制台与 API 服务已启动: http://%s (Token鉴权: %s)", httpAddr, tokenDesc)
+				logger.Linef(logger.IconOK, "Web 控制台", "已启动于 http://%s（Token 鉴权: %s）", httpAddr, tokenDesc)
 				if err := targetServer.Start(); err != nil && err != http.ErrServerClosed {
-					logger.PrintError(fmt.Sprintf("❌ 内置 HTTP 服务异常退出: %v", err))
+					logger.Error("HTTP 服务异常退出：%v", err)
 				}
 			}()
 		}
@@ -131,24 +133,22 @@ func (r *RootCmd) executeDaemon(args []string) {
 
 	events := core.DaemonEvents{
 		OnLog: func(msg string) {
-			logger.PrintTimestampedMessage("%s", msg)
+			logger.Info("%s", msg)
 		},
 		OnASNStart: func(asn *types.ASNRecord, cidrCount int, totalIPs int64) {
-			logger.PrintTimestampedMessage("🎯 [调度中枢] 选中自治系统 AS%d (%s, %s) - 启动 %d 个网段，约 %d 个 IP",
-				asn.ASN, asn.Name, asn.Country, cidrCount, totalIPs)
+			logger.Linef(logger.IconStep, "调度选中", "AS%d %s（%s），网段 %d 个、约 %d 个 IP", asn.ASN, asn.Name, asn.Country, cidrCount, totalIPs)
 		},
 		OnASNComplete: func(asn *types.ASNRecord, foundTargets int, duration time.Duration) {
-			logger.PrintTimestampedMessage("🏆 [调度中枢] 自治系统 AS%d 扫描完毕！新增有效资产 %d 个 (耗时 %v)",
-				asn.ASN, foundTargets, duration.Round(time.Second))
+			logger.Linef(logger.IconOK, "扫描完成", "AS%d 新增目标 %d 个（耗时 %v）", asn.ASN, foundTargets, duration.Round(time.Second))
 		},
 		OnScanRecord: func(probe *scanner.ProbeResult) {
 			if !*verbose || probe == nil {
 				return
 			}
 			if !probe.Success {
-				logger.PrintTimestampedMessage("[-] %-15s:%-4d | 探活失败: %s", probe.IP, probe.Port, probe.FailureReason)
+				logger.Linef(logger.IconDetail, "扫描失败", "%s:%d（%s）", probe.IP, probe.Port, probe.FailureReason)
 			} else {
-				logger.PrintTimestampedMessage("[+] %-15s:%-4d | 握手成功: 提取域名 %s (ALPN: %s, 套件: %s)",
+				logger.Linef(logger.IconOK, "扫描成功", "%s:%d 提取域名 %s（ALPN: %s，套件: %s）",
 					probe.IP, probe.Port, probe.Result.CertDomain, probe.Result.ALPN, probe.Result.Curve)
 			}
 		},
@@ -156,17 +156,16 @@ func (r *RootCmd) executeDaemon(args []string) {
 			if !*verbose {
 				return
 			}
-			logger.PrintTimestampedMessage("[~] %-15s      | 域名未入选: %-25s | 原因: %s", ip, domain, reason)
+			logger.Linef(logger.IconDetail, "域名未入选", "%s %s（原因: %s）", ip, domain, reason)
 		},
 		OnCandidateDiscovered: func(ip string, domain string) {
-			logger.Info("🔎 扫描发现候选域名: %s (IP: %s)", domain, ip)
+			logger.Linef(logger.IconDetail, "候选域名", "%s（IP: %s）", domain, ip)
 		},
 		OnAdaptiveAdjust: func(stats adaptive.LimiterStats) {
-			logger.PrintTimestampedMessage("⚡ [自适应调谐] %s", stats.LastActionReason)
+			logger.Info("自适应调谐：%s", stats.LastActionReason)
 		},
 		OnTargetFound: func(target *types.TargetRecord) {
-			logger.PrintTimestampedMessage("⭐ 发现优质 REALITY 目标: %-25s (IP: %-15s, 握手: %dms, 评级: %d星)",
-				target.Domain, target.IP, target.HandshakeMS, target.Stars)
+			logger.Linef(logger.IconOK, "命中目标", "%s（IP: %s，握手: %dms，评级: %d 星）", target.Domain, target.IP, target.HandshakeMS, target.Stars)
 		},
 	}
 
@@ -195,7 +194,7 @@ func (r *RootCmd) executeDaemon(args []string) {
 	go func() {
 		select {
 		case sig := <-sigChan:
-			logger.PrintTimestampedMessage("🛑 捕获系统退出信号 (%s)，通知扫描调度引擎与 HTTP 服务平滑停机...", sig)
+			logger.Warn("退出信号：%s，调度引擎与 HTTP 服务平滑停机", sig)
 			stopHTTP()
 			cancel()
 		case <-ctx.Done():
@@ -206,10 +205,10 @@ func (r *RootCmd) executeDaemon(args []string) {
 	// 7. 运行守护循环
 	if err := daemon.Start(ctx); err != nil && err != context.Canceled {
 		stopHTTP()
-		logger.PrintError(fmt.Sprintf("守护进程异常终止: %v", err))
+		logger.Error("守护进程异常终止：%v", err)
 		return
 	}
 
 	stopHTTP()
-	logger.PrintTimestampedMessage("👋 24小时守护进程已优雅退出，所有扫描进度与断点均已妥善保存。")
+	logger.Success("守护进程已退出：扫描进度与断点均已保存")
 }

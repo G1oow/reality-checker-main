@@ -199,7 +199,7 @@ func (w *PatrolWatchdog) RunOnce(ctx context.Context) (*PatrolReport, error) {
 		targets = append(targets, t)
 	}
 
-	w.log("🛡️ 开始存量资产健康巡检：待检测目标 %d 个（高星 %d 个，普通 %d 个）...",
+	w.log("巡检开始：待复核目标 %d 个（高星 %d 个，普通 %d 个）",
 		len(targets), len(highStarTargets), len(normalTargets))
 
 	if len(targets) > 0 {
@@ -263,7 +263,7 @@ func (w *PatrolWatchdog) RunOnce(ctx context.Context) (*PatrolReport, error) {
 	_ = w.store.RunWALCheckpoint()
 
 	report.Duration = time.Since(startTime)
-	w.log("✅ 巡检轮次结束：共复测 %d 个目标（存活: %d, 失效降级: %d），清理超期日志 %d 条，清理僵尸资产 %d 个，耗时: %v",
+	w.log("巡检轮次结束：复核 %d 个目标（存活 %d、失效降级 %d），清理超期日志 %d 条、僵尸资产 %d 个，耗时 %v",
 		report.TotalChecked, report.Successful, report.Failed, report.CleanedLogs, report.CleanedTargets, report.Duration.Round(time.Millisecond))
 
 	return report, nil
@@ -275,11 +275,11 @@ func (w *PatrolWatchdog) Start(ctx context.Context, checkInterval time.Duration)
 		checkInterval = 1 * time.Hour
 	}
 
-	w.log("🐕 资产保鲜巡检守护进程 (Watchdog) 已启动，巡检频次: 每 %v", checkInterval)
+	w.log("巡检守护启动：Watchdog 巡检频次每 %v", checkInterval)
 
 	// 启动时立即执行一次巡检
 	if _, err := w.RunOnce(ctx); err != nil && ctx.Err() == nil {
-		w.log("⚠️ 首次巡检异常: %v", err)
+		w.log("首次巡检异常：%v", err)
 	}
 
 	ticker := time.NewTicker(checkInterval)
@@ -288,11 +288,11 @@ func (w *PatrolWatchdog) Start(ctx context.Context, checkInterval time.Duration)
 	for {
 		select {
 		case <-ctx.Done():
-			w.log("🛑 巡检守护进程 (Watchdog) 收到退出信号，已平稳关闭。")
+			w.log("巡检守护停止：收到退出信号，已平稳关闭")
 			return nil
 		case <-ticker.C:
 			if _, err := w.RunOnce(ctx); err != nil && ctx.Err() == nil {
-				w.log("⚠️ 周期巡检异常: %v", err)
+				w.log("周期巡检异常：%v", err)
 			}
 		}
 	}

@@ -20,37 +20,36 @@ func (r *RootCmd) executeCheck(domain string) {
 	// 验证域名格式
 	domain = strings.TrimSpace(domain)
 	if !isValidDomain(domain) {
-		logger.PrintErrorWithDetails(
-			fmt.Sprintf("错误：域名格式无效 '%s'", domain),
-			"提示：请检查域名格式，例如：apple.com, google.com",
-			"域名要求：",
-			"   - 只能包含字母、数字、连字符和点",
-			"   - 不能以点开头或结尾",
-			"   - 不能包含连续的点",
-			"   - 长度不超过253个字符",
-		)
+		logger.Error("域名格式无效：%s", domain)
+		logger.Detail("请确认域名格式，例如 apple.com、google.com")
+		logger.Detail("域名要求：")
+		logger.Detail("只能包含字母、数字、连字符和点")
+		logger.Detail("不能以点开头或结尾")
+		logger.Detail("不能包含连续的点")
+		logger.Detail("长度不超过 253 个字符")
 		return
 	}
 
-	logger.PrintTimestampedMessage("开始检测域名: %s", domain)
+	logger.Step("扫描目标：%s", domain)
 
 	result, err := r.engine.CheckDomain(r.ctx, domain)
 	if err != nil {
-		fmt.Printf("检测失败: %v\n", err)
+		logger.Error("扫描失败：%v", err)
 		return
 	}
 	if result.Suitable {
 		if err := r.saveCheckResult(result); err != nil {
-			logger.PrintError(fmt.Sprintf("检测合格，但写入资产数据库失败: %v", err))
+			logger.Error("目标合格但入库失败：%v", err)
 		} else {
-			logger.PrintTimestampedMessage("✅ 检测合格，已写入或更新资产数据库")
+			logger.Success("目标合格：已写入或更新资产库")
 		}
 	}
 
 	// 使用格式化器输出结果
 	cfg, _ := config.LoadConfig("")
 	formatter := report.NewFormatter(cfg)
-	fmt.Printf("\n%s", formatter.FormatSingleResult(result))
+	logger.Blank()
+	logger.Plain("%s", formatter.FormatSingleResult(result))
 }
 
 func (r *RootCmd) saveCheckResult(result *types.DetectionResult) error {

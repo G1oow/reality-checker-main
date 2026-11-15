@@ -16,7 +16,7 @@ import (
 
 // executePipe 从标准输入(Stdin)流式读取 CSV 数据或域名，进行实时并行检测并输出彩色表格
 func (r *RootCmd) executePipe() {
-	logger.PrintTimestampedMessage("开启管道流式检测模式 (Pipe Mode)...")
+	logger.Step("管道模式启动：流式扫描")
 
 	filter := types.FilterConfig{}
 	if r.batchManager != nil && r.batchManager.GetConfig() != nil {
@@ -135,15 +135,16 @@ func (r *RootCmd) executePipe() {
 	close(domainChan)
 
 	if err := scanner.Err(); err != nil {
-		logger.PrintError(fmt.Sprintf("读取管道输入错误: %v", err))
+		logger.Error("管道输入读取失败：%v", err)
 	}
 
-	logger.PrintTimestampedMessage("管道流式检测结束。共找到 %d 个适合的 REALITY 目标域名。", len(suitableResults))
+	logger.Success("管道扫描完成：命中 %d 个目标", len(suitableResults))
 
 	// 渲染经典带颜色 ASCII 表格
 	if len(suitableResults) > 0 {
 		r.batchManager.SortByRecommendationStars(suitableResults)
-		fmt.Println("\n适合的域名:")
-		fmt.Println(r.batchManager.FormatSuitableTable(suitableResults))
+		logger.Blank()
+		logger.Plain("命中目标：")
+		logger.Plain("%s", r.batchManager.FormatSuitableTable(suitableResults))
 	}
 }
