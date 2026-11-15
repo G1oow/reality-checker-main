@@ -11,7 +11,7 @@ func newPlatformSystemMonitor() SystemMonitor {
 }
 
 func (m *fallbackSystemMonitor) Sample() SystemMetrics {
-	// 非 Linux 平台 (如 Windows 开发机/macOS) 默认返回可用占位
+	// 非 Linux 平台默认返回不可用占位（仅用于本地开发与测试）
 	return SystemMetrics{
 		Load1:      0,
 		Load5:      0,

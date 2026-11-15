@@ -113,7 +113,4 @@ GOOS=linux GOARCH=amd64 go build -ldflags "-s -w -X RealityChecker/internal/vers
 GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X RealityChecker/internal/version.Version=${VERSION} -X RealityChecker/internal/version.Commit=${COMMIT} -X RealityChecker/internal/version.BuildTime=${BUILD_TIME}" -o reality-checker-linux-arm64 .
 ```
 
-### 编译 Windows AMD64
-```bash
-GOOS=windows GOARCH=amd64 go build -ldflags "-s -w -X RealityChecker/internal/version.Version=${VERSION} -X RealityChecker/internal/version.Commit=${COMMIT} -X RealityChecker/internal/version.BuildTime=${BUILD_TIME}" -o reality-checker-windows-amd64.exe .
-```
+> 本项目只支持 Linux（amd64 / arm64）。Windows 端支持已移除。

@@ -60,7 +60,7 @@ jobs:
         BUILD_TIME=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
         echo "time=${BUILD_TIME}" >> "${GITHUB_OUTPUT}"
         
-    - name: Build for Linux and Windows
+    - name: Build for Linux
       run: |
         VERSION="${{ steps.version.outputs.version }}" \
         COMMIT="$(git rev-parse --short HEAD)" \
@@ -72,7 +72,6 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/')
       run: |
         cp dist/reality-checker-linux-amd64 dist/reality-checker-main
-        cp dist/reality-checker-windows-amd64.exe dist/reality-checker-main.exe
         ls -lh dist
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
@@ -87,6 +86,12 @@ jobs:
 
           ### 本次更新
 
+          - 新增 VPS 终端面板：`rcm` 一键进入，支持「按国家/地区 ASN」与「按 VPS 入口 IP ASN（区分 IPv4/IPv6）」两种扫描模式
+          - 面板内可手动选择目标数量 limit、并发、超时与过滤开关，参数自动持久化；实时进度、命中目标与一键停止
+          - 面板扫描结果只在终端展示，不写入资产数据库
+          - `install.sh` 安装完成后直接进入面板，并安装 `rcm` 快捷指令
+          - 全面移除 Windows 端支持，仅发布 Linux amd64 / arm64 产物
+          - 统一全部 CLI 命令的信息输出格式（状态行、警告与错误）
           - 新增 Systemd 守护进程服务单元与 `install.sh` 极速安装运维脚本
           - 针对 NanoPi / 树莓派 / Armbian 嵌入式设备优化并发限流，防 NAT 表溢出
           - 新增 `reasni-service` 统一运维快捷命令（start/stop/restart/log/status/config）

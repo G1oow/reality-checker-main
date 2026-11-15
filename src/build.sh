@@ -94,19 +94,15 @@ download_mmdb
 build_target() {
   local os="$1"
   local arch="$2"
-  local suffix=""
   local name="reality-checker-${os}-${arch}"
-  if [[ "${os}" == "windows" ]]; then
-    suffix=".exe"
-  fi
 
   echo "Building ${os}/${arch}..."
   CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" \
-    go build -trimpath -ldflags "${LDFLAGS}" -o "${DIST_DIR}/${name}${suffix}" "${ROOT_DIR}"
+    go build -trimpath -ldflags "${LDFLAGS}" -o "${DIST_DIR}/${name}" "${ROOT_DIR}"
   (
     cd "${DIST_DIR}"
     if command -v zip >/dev/null 2>&1; then
-      zip -q -j "${name}.zip" "${name}${suffix}"
+      zip -q -j "${name}.zip" "${name}"
     fi
   )
 }
@@ -117,11 +113,13 @@ echo "Build time: ${BUILD_TIME}"
 
 build_target linux amd64
 build_target linux arm64
-build_target windows amd64
 
 echo "Copying deployment assets to ${DIST_DIR}..."
 cp -f "${ROOT_DIR}/scripts/install.sh" "${DIST_DIR}/install.sh"
 cp -f "${ROOT_DIR}/deploy/systemd/reasni-daemon.service" "${DIST_DIR}/reasni-daemon.service"
+if [[ -f "${ROOT_DIR}/../rcm" ]]; then
+  cp -f "${ROOT_DIR}/../rcm" "${DIST_DIR}/rcm"
+fi
 
 echo "Build artifacts: ${DIST_DIR}"
 ls -lh "${DIST_DIR}"
