@@ -626,7 +626,8 @@ type NetworkConfig struct {
 	Timeout    time.Duration `yaml:"timeout"`
 	Retries    int           `yaml:"retries"`
 	DNSServers []string      `yaml:"dns_servers"`
-	Proxy      string        `yaml:"proxy"` // 兼容 network.proxy 配置
+	Proxy      string        `yaml:"proxy"`  // 兼容 network.proxy 配置
+	Family     string        `yaml:"family"` // 目标连接协议族: ""(不限定) / "ipv4" / "ipv6"
 }
 
 // ConcurrencyConfig 并发配置

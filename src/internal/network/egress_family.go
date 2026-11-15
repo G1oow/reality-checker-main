@@ -13,6 +13,43 @@ import (
 	"github.com/oschwald/geoip2-golang"
 )
 
+// NormalizeDialFamily 归一化目标连接协议族配置，取值 ""（不限定）/ "ipv4" / "ipv6"
+func NormalizeDialFamily(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ipv4", "4", "v4":
+		return "ipv4"
+	case "ipv6", "6", "v6":
+		return "ipv6"
+	default:
+		return ""
+	}
+}
+
+// FamilyDialContext 把拨号固定到指定协议族；family 为空时返回原 dial。
+// 用于「仅 IPv4 / 仅 IPv6」的目标域名校验，保证校验走的就是该协议族。
+func FamilyDialContext(
+	dial func(ctx context.Context, network, addr string) (net.Conn, error),
+	family string,
+) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	normalized := NormalizeDialFamily(family)
+	if normalized == "" || dial == nil {
+		return dial
+	}
+	target := FamilyIPv4
+	if normalized == "ipv6" {
+		target = FamilyIPv6
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dial(ctx, familyDialNetwork(network, target), addr)
+	}
+}
+
+// NewFamilyDialer 返回按协议族固定的拨号函数（用于检测器内部自建连接）
+func NewFamilyDialer(family string, timeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: timeout}
+	return FamilyDialContext(dialer.DialContext, family)
+}
+
 // Family 出口 IP 协议族
 type Family int
 

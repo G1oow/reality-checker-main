@@ -403,6 +403,14 @@ func (p *Pipeline) SetEarlyExit(earlyExit bool) {
 	p.earlyExit = earlyExit
 }
 
+// SetConnections 替换底层连接管理器（协议族切换时重建连接层）。
+// 与 Execute 并发时存在固有数据竞争，调用方需保证在两次扫描之间调用。
+func (p *Pipeline) SetConnections(connections *network.ConnectionManager) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.connections = connections
+}
+
 // GetStages 获取当前所有阶段副本
 func (p *Pipeline) GetStages() []types.DetectionStage {
 	p.mu.RLock()

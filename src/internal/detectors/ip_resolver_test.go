@@ -2,7 +2,10 @@ package detectors
 
 import (
 	"net"
+	"strings"
 	"testing"
+
+	"RealityChecker/internal/types"
 )
 
 // dialAddress 必须产出 net.Dial 能直接消费的 host:port。
@@ -48,5 +51,61 @@ func TestDialAddress_IPv4Unbracketed(t *testing.T) {
 		if got := dialAddress(tc.ip, tc.port); got != tc.want {
 			t.Fatalf("dialAddress(%q, %q) = %q, want %q", tc.ip, tc.port, got, tc.want)
 		}
+	}
+}
+
+// 仅 IPv6 校验时域名必须有 AAAA 记录，否则必须给出可读原因而不是静默跳过。
+func TestSelectAddressByDialFamily(t *testing.T) {
+	v4 := net.IPAddr{IP: net.ParseIP("198.51.100.7")}
+	v6 := net.IPAddr{IP: net.ParseIP("2001:db8::7")}
+
+	cases := []struct {
+		name   string
+		ips    []net.IPAddr
+		family string
+		want   string
+		reason string
+	}{
+		{"仅 IPv4 且存在 A 记录", []net.IPAddr{v4, v6}, "ipv4", "198.51.100.7", ""},
+		{"仅 IPv6 且存在 AAAA 记录", []net.IPAddr{v4, v6}, "ipv6", "2001:db8::7", ""},
+		{"不限定协议族时优先 IPv4", []net.IPAddr{v4, v6}, "", "198.51.100.7", ""},
+		{"不限定协议族且只有 IPv6", []net.IPAddr{{IP: nil}, v6}, "", "2001:db8::7", ""},
+		{"仅 IPv4 但只有 AAAA", []net.IPAddr{v6}, "ipv4", "", "无 A 记录"},
+		{"仅 IPv6 但只有 A 记录", []net.IPAddr{v4}, "ipv6", "", "无 AAAA 记录"},
+		{"仅 IPv6 且无任何记录", nil, "ipv6", "", "无 AAAA 记录"},
+		{"不限定协议族且无任何记录", nil, "", "", "未找到IP地址"},
+	}
+	for _, tc := range cases {
+		got, err := selectAddress(tc.ips, tc.family)
+		if tc.reason == "" {
+			if err != nil {
+				t.Fatalf("%s：不应报错，实际 %v", tc.name, err)
+			}
+			if got != tc.want {
+				t.Fatalf("%s：应选中 %s，实际 %s", tc.name, tc.want, got)
+			}
+			continue
+		}
+		if err == nil {
+			t.Fatalf("%s：应返回错误（%s），实际选中 %s", tc.name, tc.reason, got)
+		}
+		if !strings.Contains(err.Error(), tc.reason) {
+			t.Fatalf("%s：错误信息应包含 %q，实际 %q", tc.name, tc.reason, err.Error())
+		}
+	}
+}
+
+// dialFamilyOf 从流水线配置中取出目标连接协议族。
+func TestDialFamilyOf(t *testing.T) {
+	if got := dialFamilyOf(nil); got != "" {
+		t.Fatalf("空上下文应返回不限定协议族，实际 %q", got)
+	}
+	ctx := &types.PipelineContext{Config: &types.Config{}}
+	if got := dialFamilyOf(ctx); got != "" {
+		t.Fatalf("未配置协议族时应返回空串，实际 %q", got)
+	}
+	ctx.Config.Network.Family = "V6"
+	if got := dialFamilyOf(ctx); got != "ipv6" {
+		t.Fatalf("协议族应被归一化，实际 %q", got)
 	}
 }

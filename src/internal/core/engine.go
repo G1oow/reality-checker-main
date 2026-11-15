@@ -179,6 +179,42 @@ func (e *Engine) SetProfile(profile PipelineProfile) {
 	}
 }
 
+// SetDialFamily 设置目标连接协议族（""/"ipv4"/"ipv6"），并按需重建连接管理器。
+// 必须在两次扫描之间调用（扫描进行中切换会造成数据竞争）。
+func (e *Engine) SetDialFamily(family string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	normalized := network.NormalizeDialFamily(family)
+	if e.config == nil {
+		// 零值引擎（测试桩）没有连接层可切换
+		return
+	}
+	if network.NormalizeDialFamily(e.config.Network.Family) == normalized && e.connections != nil {
+		return
+	}
+	e.config.Network.Family = normalized
+
+	if e.connections != nil {
+		_ = e.connections.Stop()
+	}
+	e.connections = network.NewConnectionManager(e.config)
+	_ = e.connections.Start()
+	if e.pipeline != nil {
+		e.pipeline.SetConnections(e.connections)
+	}
+}
+
+// DialFamily 返回当前目标连接协议族配置
+func (e *Engine) DialFamily() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.config == nil {
+		return ""
+	}
+	return network.NormalizeDialFamily(e.config.Network.Family)
+}
+
 // GetStats 获取引擎统计信息
 func (e *Engine) GetStats() *EngineStats {
 	e.mu.RLock()
