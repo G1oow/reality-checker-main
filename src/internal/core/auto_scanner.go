@@ -312,8 +312,7 @@ func shuffleCIDRs(cidrs []string) {
 	if len(cidrs) < 2 {
 		return
 	}
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	rng.Shuffle(len(cidrs), func(i, j int) {
+	rand.Shuffle(len(cidrs), func(i, j int) {
 		cidrs[i], cidrs[j] = cidrs[j], cidrs[i]
 	})
 }
