@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"RealityChecker/internal/storage"
@@ -124,4 +125,44 @@ func TestCidrIsIPv6(t *testing.T) {
 			t.Fatalf("cidrIsIPv6(%q) = %v，期望 %v（IPv6 网段曾被硬编码开关静默跳过）", cidr, got, want)
 		}
 	}
+}
+
+func TestShuffleCIDRs(t *testing.T) {
+	original := []string{
+		"192.0.2.0/24",
+		"198.51.100.0/24",
+		"203.0.113.0/24",
+		"192.0.2.128/25",
+		"198.51.100.128/25",
+		"203.0.113.128/25",
+	}
+
+	cidrs := append([]string(nil), original...)
+	orders := make(map[string]bool)
+	for i := 0; i < 50; i++ {
+		shuffleCIDRs(cidrs)
+
+		seen := make(map[string]int, len(cidrs))
+		for _, c := range cidrs {
+			seen[c]++
+		}
+		for _, c := range original {
+			if seen[c] != 1 {
+				t.Fatalf("随机化后网段 %q 出现 %d 次，应恰好 1 次", c, seen[c])
+			}
+		}
+		orders[strings.Join(cidrs, ",")] = true
+	}
+
+	if len(orders) < 2 {
+		t.Errorf("50 次随机化始终得到同一顺序，未实现网段级随机轮询")
+	}
+
+	// 单网段与空列表不应被改动
+	single := []string{"192.0.2.0/24"}
+	shuffleCIDRs(single)
+	if len(single) != 1 || single[0] != "192.0.2.0/24" {
+		t.Errorf("单网段被意外改动: %v", single)
+	}
+	shuffleCIDRs(nil)
 }

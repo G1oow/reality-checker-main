@@ -770,7 +770,7 @@ func (s *TargetStore) UpsertASNRecords(records []*types.ASNRecord) error {
 	return tx.Commit()
 }
 
-// GetNextPendingASN 获取下一个待扫描的 ASN（支持高优先级优先）
+// GetNextPendingASN 在满足优先级条件的待扫描池中随机轮询一个 ASN
 func (s *TargetStore) GetNextPendingASN(minPriority int) (*types.ASNRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -785,7 +785,8 @@ func (s *TargetStore) GetNextPendingASN(minPriority int) (*types.ASNRecord, erro
 		query += " AND priority >= ?"
 		args = append(args, minPriority)
 	}
-	query += " ORDER BY priority DESC, last_scanned_at ASC NULLS FIRST, asn ASC LIMIT 1"
+	// 随机轮询：pending 池内等概率抽取，不再按固定顺序（优先级 / ASN 升序）依次推进
+	query += " ORDER BY RANDOM() LIMIT 1"
 
 	var rec types.ASNRecord
 	var lastScanned sql.NullTime

@@ -3,7 +3,7 @@ package version
 // 版本与元数据信息，支持由构建时注入 (-ldflags "-X RealityChecker/internal/version.AppName=...")
 var (
 	AppName   = "reality-checker"
-	Version   = "1.7.0"
+	Version   = "1.8.0"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
