@@ -37,7 +37,7 @@
 - **多形态接入服务体系**：
   - **RESTful API & SSE 流式长连接**：提供 `/api/targets/smart`、`/api/targets/stream`、`/api/targets/check` 标准接口，完美契合中间件与控制面板集成；
   - **嵌入式可视化控制台 (Web UI)**：基于 React + TypeScript 构建，支持单二进制内嵌分发（`go:embed`），可视化管理资产、ASN 队列与即时测算；
-  - **VPS 终端面板 (TUI)**：安装后一条 `rcm` 直接进入面板，发现阶段恒扫 IPv4 网段（入口 ASN / 国家 ASN，仅 IPv6 校验时按 VPS 所在国家 ASN），域名校验支持仅 IPv4 / 仅 IPv6 / 双栈（仅 IPv6 要求 AAAA 且走 tcp6），实时进度、一键停止、参数持久化，结果只在面板内展示（不写资产库）；
+  - **VPS 终端面板（交互式数字菜单）**：安装后一条 `rcm` 直接进入面板，输入编号调整参数、`s` 开始扫描（singbox-lite 风格的清屏菜单，不依赖方向键）；发现阶段恒扫 IPv4 网段（入口 ASN / 国家 ASN，仅 IPv6 校验时按 VPS 所在国家 ASN），域名校验支持仅 IPv4 / 仅 IPv6 / 双栈（仅 IPv6 要求 AAAA 且走 tcp6），实时进度、Ctrl+C 停本次扫描、参数持久化，结果只在面板内展示（不写资产库）；
   - **高并发 CLI & 管道流式处理**：原生支持 `reality-checker pipe` 管道批量验证与 `Ctrl+C` 平滑中断输出。
 ---
 
