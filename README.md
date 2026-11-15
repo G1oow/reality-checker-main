@@ -4,25 +4,26 @@
 
 程序会硬性校验 TLS 1.3、X25519、HTTP/2、证书有效性、SNI 匹配、非国内站点，并按是否 CDN、是否热门大站、握手延迟、证书剩余天数、页面状态综合打星，只输出真正可用的目标。
 
+**面向 VPS 的终端面板（TUI）**：装完一条 `rcm` 就能进面板，按国家/地区 ASN 或按本机入口 IP 的 ASN 扫描，实时看进度、随手停。
+
 > 配套程序由 **GitHub Actions 从 `main` 构建并发布到 Releases**。上游流传的 `v2.2.3`（csv 命令只取第 3 列）与 `v1.1.2` release（证书校验 bug，结果恒为 0）**均不可用**，请只使用本仓库的 release。
+>
+> 本仓库**只支持 Linux**（amd64 / arm64）。Windows 端支持已移除：相关安装脚本、构建脚本与可执行产物均已从仓库删除。
 
 ---
 
 ## 一键指令
 
-装完会自动探测本机出口 IP：检测到双栈时会让你选 IPv4 还是 IPv6，选完回车即可开始扫描。
-
-### Linux（VPS / Debian / Ubuntu）
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/G1oow/reality-checker-main/main/install.sh | bash
 ```
 
-默认安装到 `/root/rc-new`，完成后直接跑：
+默认安装到 `/root/rc-new`，并安装快捷指令 `rcm` 到 `/usr/local/bin/rcm`。安装脚本会：
 
-```bash
-cd /root/rc-new && ./reality-checker-main auto <你的VPS_IP> --limit 5
-```
+1. 下载主程序（`reality-checker-main`）并 `chmod +x`；
+2. 拉取 `config.yaml` 与 `data/` 下的离线规则库（国家 IP 库、GFW 列表、CDN 特征、热门站点特征、排除规则）；
+3. 安装 `rcm` 快捷指令（下载失败时使用脚本内置兜底版本）；
+4. **在交互终端里直接进入面板**；非交互环境（`curl | bash`、CI）只打印后续用法并正常退出，绝不阻塞。
 
 自定义目录：
 
@@ -30,53 +31,66 @@ cd /root/rc-new && ./reality-checker-main auto <你的VPS_IP> --limit 5
 curl -fsSL https://raw.githubusercontent.com/G1oow/reality-checker-main/main/install.sh | bash -s -- /opt/rc
 ```
 
-### Windows（PowerShell）
+安装脚本支持的环境变量：`REF` / `REF_TAG`（规则库分支与主程序版本）、`RC_BASE` / `RC_REL_BASE`（下载基址覆盖，便于走镜像）、`RC_BIN_DIR`（快捷指令安装目录，默认 `/usr/local/bin`）、`RC_NO_PANEL=1`（装完不自动进面板）。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/G1oow/reality-checker-main/main/install.ps1 | iex"
+---
+
+## 面板：`rcm`
+
+```bash
+rcm            # 进入终端面板，沿用上次保存的扫描参数
+rcm --help     # 查看面板全部选项与快捷键
 ```
 
-默认安装到 `%USERPROFILE%\reality-checker`，完成后直接跑：
+面板细节（快捷键、过滤项含义、参数持久化、纯文本模式）见 [`src/doc/deploy/tui-panel.md`](./src/doc/deploy/tui-panel.md)。
 
-```powershell
-cd "$env:USERPROFILE\reality-checker"; .\reality-checker-main.exe auto <你的VPS_IP> --limit 5
+面板把扫描分成两步：**发现**（扫 IPv4 网段，从站点证书里挖候选域名）与**校验**（按所选协议族验证候选域名）。
+
+发现来源：
+
+| 发现来源 | 触发条件 | 扫描对象 |
+|---|---|---|
+| **按 VPS 入口 IP ASN** | 默认 | 自动探测本机出口 **IPv4 与 IPv6**，取所选入口的 ASN，扫描该 ASN 公告的 **IPv4 网段** |
+| **按国家/地区 ASN** | 「扫描模式」选到国家模式 | 在线拉取该国 ASN 清单（RIPE Stat `country-resource-list`），逐个 ASN 扫描其 **IPv4 网段** |
+| **按 VPS 所在国家 ASN** | 「校验协议族」选「仅 IPv6」时固定使用 | 先用出口探测判定 VPS 所在国家（优先 IPv6 出口，回退 IPv4），再扫该国 ASN 清单的 IPv4 网段；面板里填国家代码可覆盖自动判定 |
+
+> IPv6 不做地址空间扫描：运营商常见的 IPv6 聚合大段（`/32`、`/41` 等）无法逐 IP 枚举，所以 IPv6 只用于**域名校验**——选「仅 IPv6」时域名必须有 `AAAA` 记录，并用 `tcp6` 完成 TLS 1.3 / HTTP/2 / 证书校验，没有 AAAA 的域名会被剔除并显示原因；本机没有 IPv6 出口时会直接阻止启动，避免空跑。发现阶段只扫 `IPv4 ≥ /16` 的网段，更粗的聚合大段会跳过并说明原因；若某 ASN 完全没有可枚举的 IPv4 网段，面板会直接报错而不是静默扫 0 个 IP。
+
+面板内可以做的事：
+
+- **一键扫描**：按 `s` 开始，按 `x` / `esc` 随时停止，命中数量达到 limit 立即停止；
+- **手动选择 limit**：`1 2 3 5 8 10 20 30 50 100`，上限 100；
+- **扫描参数**：并发（10~2000）、单 IP 超时（1~15 秒）；
+- **进阶过滤**：最低星级、握手延迟上限、证书剩余天数下限、是否允许 CDN、是否允许热门大站、是否排除国内站点、是否排除默认页；
+- **实时进度**：已扫描 IP 数、命中数、候选域名数、速率、当前网段、当前 IP、批次进度、已用时长；
+- **结果展示**：域名 / IP / ASN / 国家 / 星级 / 握手延迟 / 证书剩余天数 / 是否 CDN / 状态码，按星级与延迟排序，可滚动。
+
+**快捷键**：`↑↓` 选择参数 · `←→` 改值 · `空格` 切换开关 · `回车` 输入国家代码 · `tab` 切换焦点（参数区 ↔ 结果区）· `s` 开始扫描 · `x`/`esc` 停止 · `r` 重新探测入口 · `q` 退出。
+
+**参数持久化**：面板参数自动保存到 `~/.config/reality-checker/panel.json`（可用 `RCM_SETTINGS` 或 `--settings` 指定其他路径），下次进入面板时沿用。
+
+**结果只展示、不落库**：面板扫描不会读写资产数据库（`data/reality_targets.db`），需要入库时使用 `auto` / `get` 等命令。
+
+面板也支持纯文本模式，便于脚本或无终端环境：
+
+```bash
+./reality-checker-main ui --no-tui --mode country --country DE --limit 3
+./reality-checker-main ui --family v6 --limit 1     # 仅 IPv6 校验：按 VPS 所在国家 ASN 的 IPv4 网段发现，命中 1 个即停
 ```
-
-自定义目录：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $env:REF='main'; irm https://raw.githubusercontent.com/G1oow/reality-checker-main/main/install.ps1 -OutFile $env:TEMP\rc-install.ps1; & $env:TEMP\rc-install.ps1 'D:\rc' }"
-```
-
-### 一键指令做了什么
-
-1. 下载对应平台的主程序（`reality-checker-main` / `reality-checker-main.exe`）；
-2. 解除执行限制（Linux `chmod +x`，Windows `Unblock-File`）；
-3. 拉取 `config.yaml` 与 `data/` 下的离线规则库（国家 IP 库、GFW 列表、CDN 特征、热门站点特征、排除规则）；
-4. 自动探测本机出口 IP：只有 IPv4 或只有 IPv6 就直接采用；**双栈时让你选 1) IPv4 / 2) IPv6**（选 IPv6 会附加 `-6`）；都探测不到则提示手动输入；
-5. 打印完整运行命令，问一句「现在开始扫描？」，回车即开始（默认不跑）。
-
-全程只往指定目录写文件，不改动系统配置。全自动场景（无终端、`curl | bash` 到 CI）会自动降级为默认值，不会卡住。
-
-> 探测走 `api4.ipify.org` / `api6.ipify.org`，失败时回退 `icanhazip.com`。入口 IP 只用于反查 ASN 网段，不会外传。
 
 ---
 
 ## 手动部署
-
-主程序不再随仓库分发，统一从 Releases 获取：
 
 ```bash
 mkdir -p /root/rc-new && cd /root/rc-new
 curl -fL -o reality-checker-main \
   https://github.com/G1oow/reality-checker-main/releases/latest/download/reality-checker-main
 chmod +x reality-checker-main
-./reality-checker-main auto <你的VPS_IP> --limit 5
+rcm                                     # 若未安装 rcm，可直接 ./reality-checker-main ui
 ```
 
 指定版本时把 `latest` 换成对应 tag：`.../releases/download/<tag>/reality-checker-main`。
-
-Windows 直接双击 `reality-checker-main.exe` 或按上面 PowerShell 命令运行。
 
 **注意：`data/` 目录必须与主程序同级**，否则启动时会尝试从 GitHub 拉规则库，网络不好就会失败。
 
@@ -88,16 +102,12 @@ Windows 直接双击 `reality-checker-main.exe` 或按上面 PowerShell 命令�
 
 ```bash
 cd src
-./build.sh          # Linux，产物输出到 src/dist/
+./build.sh          # 产物输出到 src/dist/（Linux amd64 / arm64）
 ```
 
-```powershell
-cd src
-.\build.ps1         # Windows
-```
 构建脚本会自动校验（缺失则下载）`internal/data/assets/Country.mmdb` 用于内置 GeoIP，国内网络先在 `src/config.yaml` 配好 `proxy` 再构建。产物默认名为 `reality-checker`，需要与其他脚本对齐时用 `APP_NAME=reality-checker-main` 覆盖。构建不依赖源码目录下的 `src/data/`；运行时若需外部规则库，直接读主程序同级的 `data/`。
 
-**产物不再提交进仓库**：推 tag（`git tag v1.0.0 && git push origin v1.0.0`）会触发 `.github/workflows/build.yml` 自动构建 Linux/Windows 产物并发布 Release，`install.sh` / `install.ps1` 从 Release 下载。
+**产物不再提交进仓库**：推 tag（`git tag v1.0.0 && git push origin v1.0.0`）会触发 `.github/workflows/build.yml` 自动构建 Linux 产物并发布 Release，`install.sh` 从 Release 下载。
 
 **顺序要求**：`web/dist` 是 `go:embed` 的编译依赖，必须先构建前端再编译 Go，否则报 `pattern dist/*: no matching files found`。环境：Go 1.26+、pnpm。
 
@@ -106,6 +116,9 @@ cd src
 ## 常用命令
 
 ```bash
+# 面板（推荐）
+rcm
+
 # 全自动：查 ASN -> 拉同国家网段 -> 并发扫描 -> 按星级输出
 ./reality-checker-main auto <IP/CIDR> --limit 5
 
@@ -128,7 +141,9 @@ cat file.csv | ./reality-checker-main pipe
 
 `auto` 常用参数：`--limit/-m`、`--check-all/-a`、`--threads/-t`、`--timeout`、`--ipv4-only/-4`、`--ipv6-only/-6`、`--allow-cdn`、`--allow-hot`、`--min-stars`、`--max-handshake`、`--country`、`--export`、`-v`。
 
-完整参数说明见下方「常用命令」与 `reality-checker-main --help`，结果列含义见「挑选建议」。
+完整参数说明见 `reality-checker-main --help`，结果列含义见「挑选建议」。
+
+**输出约定**：人类可读信息（进度、状态、警告、错误）走 stderr，机器可读数据（`pipe` 流、`--json`、`asn` 的 CIDR 列表）走 stdout，因此 `asn AS15169 US > asn.txt` 拿到的永远是纯网段列表。输出格式规范见 [`src/doc/dev/cli-output-style.md`](./src/doc/dev/cli-output-style.md)。
 
 ---
 
@@ -145,10 +160,12 @@ cat file.csv | ./reality-checker-main pipe
 | 现象 | 处理 |
 |---|---|
 | `Permission denied` | `chmod +x reality-checker-main`（每次 `scp` 后都要重做） |
+| `rcm: command not found` | 用 `RC_HOME=/root/rc-new rcm` 或重新运行 `install.sh` 安装快捷指令 |
 | 结果恒为 0 | 先 `./reality-checker-main check <已知可用的域名>` 自检；目标机房全是 CDN 时加 `--allow-cdn` |
 | 扫描很慢 | 降低 `--timeout`，1 核机器并发别超过 200 |
 | 程序卡死 | 另开终端 `kill -QUIT $(pidof reality-checker-main)` 抓协程堆栈，然后调低 `--threads` |
 | 规则库下载失败 | 确认 `data/` 五个文件都在，或在 `config.yaml` 的 `proxy.download` 走代理 |
+| 面板参数想恢复默认 | 删除 `~/.config/reality-checker/panel.json` |
 
 ---
 
@@ -157,13 +174,15 @@ cat file.csv | ./reality-checker-main pipe
 | 文件 | 说明 |
 |---|---|
 | `reality-checker-main` | Linux 主程序（从 Releases 下载，不再入库） |
-| `reality-checker-main.exe` | Windows 主程序（从 Releases 下载，不再入库） |
+| `rcm` | 面板快捷指令（`install.sh` 会安装到 `/usr/local/bin/rcm`） |
 | `config.yaml` | 过滤策略与运行参数 |
 | `data/` | 离线规则库（必须与主程序同级） |
 | `file.csv` | 历史扫描结果样例（已脱敏，IP/域名均为示例值），可直接 `pipe` 喂入 |
-| `install.sh` / `install.ps1` | 一键部署脚本 |
+| `install.sh` | 一键部署脚本（装完直接进面板） |
 | `vps-init.sh` | 新 VPS 开荒脚本（公钥/改端口/测速/调优/选目标/建节点，分段幂等） |
-| `src/` | 完整源码（Go + React，含 build.sh / build.ps1） |
+| `src/` | 完整源码（Go + React，含 build.sh） |
+
+> Windows 端支持已移除，相关脚本与产物不再随仓库分发；git 历史中仍留有旧提交对象，如需彻底清理需重建仓库。
 
 ---
 

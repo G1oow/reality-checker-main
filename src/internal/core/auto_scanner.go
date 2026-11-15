@@ -188,10 +188,10 @@ func (s *AutoScanner) Run(parentCtx context.Context) (*AutoScanResult, error) {
 				}
 				if s.events.OnLog != nil {
 					if resumedPartiallyCount > 0 {
-						s.events.OnLog(fmt.Sprintf("🔄 发现精确 IP 断点续传记录 (%s)：跳过 %d 个已完成网段，从剩余 %d 个网段（含 IP 续传网段）继续...",
+						s.events.OnLog(fmt.Sprintf("断点续传：%s 跳过 %d 个已完成网段，从剩余 %d 个网段（含 IP 续传）继续",
 							s.taskKey, skippedCompletedCount, len(remainingCIDRs)))
 					} else {
-						s.events.OnLog(fmt.Sprintf("🔄 发现断点续传记录 (%s)：自动跳过已完成的 %d 个网段，继续断点扫描剩余 %d 个网段...",
+						s.events.OnLog(fmt.Sprintf("断点续传：%s 自动跳过已完成 %d 个网段，继续扫描剩余 %d 个网段",
 							s.taskKey, skippedCompletedCount, len(remainingCIDRs)))
 					}
 				}
@@ -489,7 +489,7 @@ func (s *AutoScanner) scanSingleCIDR(
 		443,
 		threads,
 		timeout,
-		false,
+		cidrIsIPv6(cidr),
 		s.limiter,
 		subChan,
 		func(n int, ip string) {
@@ -617,4 +617,16 @@ func CalculateRemainingIPs(cidrs []string, checkpoints map[string]*storage.Check
 
 func ipv4ToUint32(b [4]byte) uint32 {
 	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+}
+
+// cidrIsIPv6 判断待扫描的单个网段或单地址是否为 IPv6
+func cidrIsIPv6(cidr string) bool {
+	value := strings.TrimSpace(cidr)
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return !prefix.Addr().Is4()
+	}
+	if addr, err := netip.ParseAddr(value); err == nil {
+		return !addr.Is4()
+	}
+	return false
 }

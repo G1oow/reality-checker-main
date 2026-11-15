@@ -411,7 +411,7 @@ func (s *ProvisionService) StreamTargets(ctx context.Context, req ProvisionReque
 			}
 		},
 		OnCandidateDiscovered: func(ip string, domain string) {
-			logger.Info("🔎 扫描发现候选域名: %s (IP: %s)", domain, ip)
+			logger.Linef(logger.IconDetail, "候选域名", "%s（IP: %s）", domain, ip)
 		},
 		OnTargetFound: func(res *types.DetectionResult, count int, ip string, handshakeMs int64, statusCode int) {
 			if res == nil || res.Domain == "" {
@@ -720,14 +720,14 @@ func (s *ProvisionService) GetSmartTargets(ctx context.Context, req ProvisionReq
 
 		if isSameASN {
 			matchLevel = "same_asn"
-			score += 1000 // 🔥 同 ASN 权重提至最高置顶
+			score += 1000 // 同 ASN 权重提至最高置顶
 			summary.SameASNHits++
 		} else if isSameCountry {
 			matchLevel = "same_country"
-			score += 250 // 🌐 同国家骨干优质权重
+			score += 250 // 同国家骨干优质权重
 		} else {
 			matchLevel = "global"
-			score += 50 // 🌍 全球优质储备
+			score += 50 // 全球优质储备
 		}
 
 		// 星级加成 (5星 +150, 4星 +120, 3星 +90)
@@ -913,7 +913,7 @@ func (s *ProvisionService) RecheckTargetCert(ctx context.Context, target *types.
 		if s.store != nil {
 			_ = s.store.UpdateTargetCertRenewal(target.Domain, remoteExpire, remoteDays, target.Tags, handshakeMS)
 		}
-		logger.Info("🔄 [证书续期检测] 目标 %s 证书已成功续期！剩余天数: %d天", target.Domain, remoteDays)
+		logger.Linef(logger.IconOK, "证书续期", "%s 已续期，剩余 %d 天", target.Domain, remoteDays)
 		return target, true
 	}
 
@@ -924,7 +924,7 @@ func (s *ProvisionService) RecheckTargetCert(ctx context.Context, target *types.
 	if s.store != nil {
 		_ = s.store.UpdateTargetCertRenewal(target.Domain, remoteExpire, remoteDays, target.Tags, handshakeMS)
 	}
-	logger.Warn("⚠️ [证书续期检测] 目标 %s 处于临期窗口 (<30天)，且远端尚未自动续期 (剩余 %d天)，已标记", target.Domain, remoteDays)
+	logger.Linef(logger.IconWarn, "证书临期", "%s 剩余 %d 天且远端未续期，已标记", target.Domain, remoteDays)
 	return target, true
 }
 

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"strings"
 
 	"RealityChecker/internal/logger"
@@ -13,16 +12,14 @@ func (r *RootCmd) executeBatch(domainsStr string) {
 	domains, invalidDomains, duplicateDomains := parseDomains(domainsStr)
 
 	if len(domains) == 0 {
-		logger.PrintErrorWithDetails(
-			"错误：没有有效的域名可以检测",
-			"提示：请检查域名格式，例如：apple.com, google.com",
-		)
+		logger.Error("有效目标缺失：没有可扫描的域名")
+		logger.Detail("请确认域名格式，例如 apple.com、google.com")
 		return
 	}
 
 	// 显示重复域名警告
 	if len(duplicateDomains) > 0 {
-		logger.PrintTimestampedMessage("警告：发现 %d 个重复域名，已去重：", len(duplicateDomains))
+		logger.Warn("重复域名：%d 个，已去重", len(duplicateDomains))
 
 		// 只显示前5个重复域名，避免显示过多
 		displayCount := 5
@@ -31,20 +28,20 @@ func (r *RootCmd) executeBatch(domainsStr string) {
 		}
 
 		for i := 0; i < displayCount; i++ {
-			fmt.Printf("   - %s\n", duplicateDomains[i])
+			logger.Detail("%s", duplicateDomains[i])
 		}
 
 		// 如果还有更多重复域名，显示省略提示
 		if len(duplicateDomains) > displayCount {
-			fmt.Printf("   ... 还有 %d 个重复域名\n", len(duplicateDomains)-displayCount)
+			logger.Detail("...以及其余 %d 个重复域名", len(duplicateDomains)-displayCount)
 		}
 
-		fmt.Println()
+		logger.Blank()
 	}
 
 	// 显示无效域名警告
 	if len(invalidDomains) > 0 {
-		logger.PrintTimestampedMessage("警告：发现 %d 个无效域名，已跳过：", len(invalidDomains))
+		logger.Warn("无效域名：%d 个，已跳过", len(invalidDomains))
 
 		// 只显示前5个无效域名，避免显示过多
 		displayCount := 5
@@ -53,22 +50,22 @@ func (r *RootCmd) executeBatch(domainsStr string) {
 		}
 
 		for i := 0; i < displayCount; i++ {
-			fmt.Printf("   - %s\n", invalidDomains[i])
+			logger.Detail("%s", invalidDomains[i])
 		}
 
 		// 如果还有更多无效域名，显示省略提示
 		if len(invalidDomains) > displayCount {
-			fmt.Printf("   ... 还有 %d 个无效域名\n", len(invalidDomains)-displayCount)
+			logger.Detail("...以及其余 %d 个无效域名", len(invalidDomains)-displayCount)
 		}
 
-		fmt.Println()
+		logger.Blank()
 	}
 
-	logger.PrintTimestampedMessage("开始批量检测 %d 个域名...", len(domains))
+	logger.Step("批量扫描：%d 个域名", len(domains))
 
 	_, err := r.batchManager.CheckDomains(r.ctx, domains)
 	if err != nil {
-		fmt.Printf("批量检测失败: %v\n", err)
+		logger.Error("批量扫描失败：%v", err)
 		return
 	}
 

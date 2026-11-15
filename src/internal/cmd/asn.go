@@ -10,12 +10,16 @@ import (
 	"RealityChecker/internal/app"
 	asnclient "RealityChecker/internal/asn"
 	"RealityChecker/internal/config"
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/version"
 )
 
 func executeASN(args []string) {
 	flags := flag.NewFlagSet("asn", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
+	flags.Usage = func() {
+		PrintCommandUsage("asn <ASN> <国家> [选项]", "查询 ASN 网段并按国家过滤，或管理 ASN 注册表", flags)
+	}
 	countryFlag := flags.String("country", "", "国家 ISO 代码或名称")
 	dbPath := flags.String("db", "data/Country.mmdb", "GeoIP 国家数据库路径")
 	storePath := flags.String("store", "data/reality_targets.db", "SQLite 目标与 ASN 数据库路径")
@@ -46,7 +50,7 @@ func executeASN(args []string) {
 		ExplicitMMDB: *dbPath,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "初始化应用容器失败: %v\n", err)
+		logger.Error("容器初始化失败：%v", err)
 		return
 	}
 	defer container.Close()
@@ -55,7 +59,7 @@ func executeASN(args []string) {
 	if *seedFlag || *syncURL != "" || *statsFlag || *listFlag {
 		store, err := container.GetStore()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "打开数据库失败: %v\n", err)
+			logger.Error("资产库打开失败：%v", err)
 			return
 		}
 
@@ -64,60 +68,64 @@ func executeASN(args []string) {
 		if *seedFlag {
 			n, err := mgr.InitDefaultRegistry()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "初始化预设 ASN 注册表失败: %v\n", err)
+				logger.Error("ASN 注册表初始化失败：%v", err)
 				return
 			}
-			fmt.Printf("成功初始化并载入 %d 个预设热门公有云与 IDC ASN\n", n)
+			logger.Success("ASN 注册表初始化：已载入 %d 个预设公有云与 IDC ASN", n)
 			return
 		}
 
 		if *syncURL != "" {
-			fmt.Printf("正在从 %s 同步 ASN 注册表...\n", *syncURL)
+			logger.Step("ASN 注册表同步：来源 %s", *syncURL)
 			n, err := mgr.SyncFromURL(context.Background(), *syncURL)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "同步失败: %v\n", err)
+				logger.Error("ASN 注册表同步失败：%v", err)
 				return
 			}
-			fmt.Printf("同步完成，新增/更新了 %d 个 ASN 记录\n", n)
+			logger.Success("同步完成：新增或更新 %d 个 ASN 记录", n)
 			return
 		}
 
 		if *statsFlag {
 			stats, err := mgr.GetStats()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "获取统计大盘失败: %v\n", err)
+				logger.Error("统计查询失败：%v", err)
 				return
 			}
-			fmt.Println("=== ASN 全网扫描任务大盘 ===")
-			fmt.Printf("总自治系统数 (Total):      %d\n", stats.TotalASNs)
-			fmt.Printf("等待扫描 (Pending):         %d\n", stats.PendingASNs)
-			fmt.Printf("正在扫描 (Scanning):        %d\n", stats.ScanningASNs)
-			fmt.Printf("已完成 (Completed):        %d\n", stats.CompletedASNs)
-			fmt.Printf("高优核心厂商 (Priority>=80): %d\n", stats.HighPriority)
+			logger.Block(
+				"ASN 全网扫描任务大盘",
+				"  "+logger.Alignment("自治系统总数 (Total)", 28)+fmt.Sprintf("%d", stats.TotalASNs),
+				"  "+logger.Alignment("等待扫描 (Pending)", 28)+fmt.Sprintf("%d", stats.PendingASNs),
+				"  "+logger.Alignment("正在扫描 (Scanning)", 28)+fmt.Sprintf("%d", stats.ScanningASNs),
+				"  "+logger.Alignment("已完成 (Completed)", 28)+fmt.Sprintf("%d", stats.CompletedASNs),
+				"  "+logger.Alignment("高优核心厂商 (Priority>=80)", 28)+fmt.Sprintf("%d", stats.HighPriority),
+			)
 			return
 		}
 
 		if *listFlag {
 			list, err := store.ListASNs(*statusFilter, 0, *limitFlag, 0)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "查询 ASN 列表失败: %v\n", err)
+				logger.Error("ASN 列表查询失败：%v", err)
 				return
 			}
-			fmt.Printf("%-8s %-6s %-8s %-12s %s\n", "ASN", "国家", "权重", "状态", "运营商/名称")
-			fmt.Println(strings.Repeat("-", 60))
+			logger.Plain("%-8s %-6s %-8s %-12s %s", "ASN", "国家", "权重", "状态", "运营商/名称")
+			logger.Plain("%s", strings.Repeat("-", 60))
 			for _, item := range list {
-				fmt.Printf("AS%-6d %-6s %-8d %-12s %s\n", item.ASN, item.Country, item.Priority, item.ScanStatus, item.Name)
+				logger.Plain("AS%-6d %-6s %-8d %-12s %s", item.ASN, item.Country, item.Priority, item.ScanStatus, item.Name)
 			}
-			fmt.Printf("共显示 %d 条记录\n", len(list))
+			logger.Plain("共显示 %d 条记录", len(list))
 			return
 		}
 	}
 
 	// 2. 原有的 ASN CIDR 网段查询与国家过滤
 	if flags.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "用法:")
-		fmt.Fprintf(os.Stderr, "  1. 查询网段: %s asn [--db Country.mmdb] [-4] [-6] <ASN> <国家>\n", version.GetAppName())
-		fmt.Fprintf(os.Stderr, "  2. 注册表管理: %s asn [--store db] [--seed] [--stats] [--list] [--sync <url>]\n", version.GetAppName())
+		logger.Block(
+			"用法:",
+			fmt.Sprintf("  1. 网段查询: %s asn [--db Country.mmdb] [-4] [-6] <ASN> <国家>", version.GetAppName()),
+			fmt.Sprintf("  2. 注册表管理: %s asn [--store db] [--seed] [--stats] [--list] [--sync <url>]", version.GetAppName()),
+		)
 		return
 	}
 	country := *countryFlag
@@ -125,30 +133,29 @@ func executeASN(args []string) {
 		country = flags.Arg(1)
 	}
 	if strings.TrimSpace(country) == "" {
-		fmt.Fprintln(os.Stderr, "错误：必须指定国家，例如 CN 或 US")
+		logger.Error("缺少国家参数：需指定两位国家代码，例如 CN、US")
 		return
 	}
 
 	db := container.GetGeoIP()
 	if db == nil {
-		fmt.Fprintf(os.Stderr, "打开GeoIP数据库失败: 未能加载有效的 GeoIP 数据库文件 (%s)\n", *dbPath)
+		logger.Error("GeoIP 库加载失败：%s 不可用", *dbPath)
 		return
 	}
 
 	prefixes, err := asnclient.NewClientWithProxy(proxyURL).FetchPrefixes(context.Background(), flags.Arg(0))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ASN查询失败: %v\n", err)
+		logger.Error("ASN 查询失败：%v", err)
 		return
 	}
 	filtered, err := asnclient.FilterByCountry(prefixes, db, country)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "国家过滤失败: %v\n", err)
+		logger.Error("国家过滤失败：%v", err)
 		return
 	}
 	filtered = asnclient.FilterIPVersion(filtered, *ipv4Only, *ipv6Only)
 	for _, prefix := range filtered {
 		fmt.Println(prefix)
 	}
-	fmt.Fprintf(os.Stderr, "共找到 %d/%d 个属于 %s 的CIDR\n", len(filtered), len(prefixes), country)
+	logger.Linef(logger.IconOK, "网段筛选", "%d/%d 个属于 %s 的 CIDR", len(filtered), len(prefixes), country)
 }
-

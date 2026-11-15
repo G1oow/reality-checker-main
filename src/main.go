@@ -64,12 +64,11 @@ func main() {
 		os.Exit(0)
 	}
 
-	// 判断是否需要打印横幅（pipe/auto 或有 --quiet 标记时跳过横幅）
+	// 判断是否需要打印横幅（面板 / pipe / auto / version 自带输出，不叠横幅）
 	shouldPrintBanner := true
-	if subcmd == "pipe" || subcmd == "auto" || subcmd == "--quiet" || subcmd == "-q" {
+	if subcmd == "ui" || subcmd == "pipe" || subcmd == "auto" || subcmd == "version" || subcmd == "-v" || subcmd == "--version" || subcmd == "--quiet" || subcmd == "-q" {
 		shouldPrintBanner = false
 	}
-
 	if shouldPrintBanner {
 		cmd.PrintBanner()
 	}
@@ -77,13 +76,12 @@ func main() {
 	// 统一加载配置 (优先使用 -c/--config，其次探测环境变量/当前目录/二进制所在目录)
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
-		fmt.Printf("⚠️ 加载配置失败: %v，将使用默认配置运行\n", err)
+		logger.Linef(logger.IconWarn, "配置加载", "失败，已使用默认配置（%s）", err.Error())
 	}
 
-	// 纯版本信息查询命令不触发网络与出口 IP 检测
+	// 纯版本信息查询与终端面板命令不需要在此探测出口 IP（面板自行分别探测 IPv4/IPv6）
 	isVersionCmd := subcmd == "version" || subcmd == "-v" || subcmd == "--version"
-	if !isVersionCmd {
-		// 校验出口 IP（须为中国大陆 CN 节点，非 CN 须通过 --force 强制拉起）
+	if !isVersionCmd && subcmd != "ui" {
 		checkCtx, checkCancel := context.WithTimeout(context.Background(), 4*time.Second)
 		geoReader, _ := data.OpenGeoIPReader("data/Country.mmdb", "Country.mmdb")
 		egressInfo, err := network.CheckEgressWithReader(checkCtx, geoReader)
@@ -93,38 +91,29 @@ func main() {
 		checkCancel()
 
 		if err != nil {
-			if force {
-				if shouldPrintBanner {
-					fmt.Printf("⚠️ 探测公网出口 IP 失败 (%v)，已检测到 --force 参数，强制继续运行...\n", err)
-				}
-			} else {
-				cmdName := version.GetAppName()
+			if !force {
 				logger.PrintErrorWithDetails(
-					fmt.Sprintf("❌ 无法检测本机公网出口 IP: %v", err),
-					"原因分析:",
-					"  启动时需要校验当前机器的公网出口是否为中国大陆 (CN) 网络。",
-					"  当前网络可能未连接外网或所有探测服务均超时不可达。",
-					"解决方式:",
-					"  若确认在离线或非标准网络环境下继续执行，请追加 --force 或 -f 参数强制启动：",
-					fmt.Sprintf("    %s --force %s", cmdName, strings.Join(remainingArgs, " ")),
+					fmt.Sprintf("出口探测失败：%s", err.Error()),
+					"原因：启动时需要校验本机公网出口是否可用，当前网络可能未连接外网或探测服务不可达。",
+					"处理：确认网络后重试，或追加 --force / -f 强制启动：",
+					fmt.Sprintf("  %s --force %s", version.GetAppName(), strings.Join(remainingArgs, " ")),
 				)
 				os.Exit(1)
 			}
+			if shouldPrintBanner {
+				logger.Linef(logger.IconWarn, "出口探测", "失败（%s），已按 --force 继续运行", err.Error())
+			}
 		} else if !egressInfo.IsCN {
-			// 非 CN 出口不再拦截：是否影响结果取决于被扫描目标是否在 CN 网段，
-			// 由 auto 分支在确定目标国家后再决定是否强提示（见 warnEgressMismatch）。
-			if force {
-				if shouldPrintBanner {
-					fmt.Printf("⚠️ 当前出口 IP [%s] 归属地为 [%s / %s]，非中国大陆 (CN) 网络。已指定 --force 参数，强制拉起继续执行...\n", egressInfo.IP, egressInfo.CountryCode, egressInfo.CountryName)
-				}
-			} else if shouldPrintBanner {
-				fmt.Printf("⚠️ 当前出口 IP [%s] 归属地为 [%s / %s]，非中国大陆 (CN) 网络。\n", egressInfo.IP, egressInfo.CountryCode, egressInfo.CountryName)
-				fmt.Println("   若被扫描目标位于中国大陆网段，握手延迟不代表国内客户端的真实体验，结果仅供参考。")
+			if shouldPrintBanner {
+				logger.Linef(logger.IconWarn, "出口 IP", "%s 归属 %s / %s，非中国大陆（CN）网络",
+					egressInfo.IP, egressInfo.CountryCode, egressInfo.CountryName)
+				logger.Detail("扫描中国大陆网段时，握手延迟不代表国内客户端的真实体验")
 			}
 			cmd.SetEgressInfo(egressInfo.IP, egressInfo.CountryCode, egressInfo.IsCN)
 		} else {
 			if shouldPrintBanner {
-				fmt.Printf("🌐 出口网络检测通过: %s (%s / %s)\n", egressInfo.IP, egressInfo.CountryCode, egressInfo.CountryName)
+				logger.Linef(logger.IconOK, "出口 IP", "%s 归属 %s / %s",
+					egressInfo.IP, egressInfo.CountryCode, egressInfo.CountryName)
 			}
 			cmd.SetEgressInfo(egressInfo.IP, egressInfo.CountryCode, true)
 		}
@@ -137,13 +126,13 @@ func main() {
 	}
 	downloader := data.NewDownloader(downloadProxy)
 	if err := downloader.EnsureDataFiles(); err != nil {
-		fmt.Printf("⚠️ 数据文件目录初始化失败: %v，将继续运行\n", err)
+		logger.Linef(logger.IconWarn, "数据文件", "初始化失败，将继续运行（%s）", err.Error())
 	}
 
 	// 创建根命令
 	rootCmd, err := cmd.NewRootCmd(cfg)
 	if err != nil {
-		fmt.Printf("初始化失败: %v\n", err)
+		logger.Linef(logger.IconError, "初始化失败", "%s", err.Error())
 		os.Exit(1)
 	}
 

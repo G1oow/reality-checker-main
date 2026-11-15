@@ -19,6 +19,9 @@ import (
 func (r *RootCmd) executePatrol(args []string) {
 	flags := flag.NewFlagSet("patrol", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
+	flags.Usage = func() {
+		PrintCommandUsage("patrol [选项]", "对资产库历史目标执行健康复核与生命周期维护", flags)
+	}
 
 	storePath := flags.String("store", "data/reality_targets.db", "SQLite 目标数据库路径")
 	concurrency := flags.Int("concurrency", 30, "巡检并发协程数")
@@ -31,7 +34,7 @@ func (r *RootCmd) executePatrol(args []string) {
 		return
 	}
 
-	logger.PrintTimestampedMessage("正在初始化 REALITY 资产保鲜巡检守护服务 (Watchdog)...")
+	logger.Step("巡检服务启动：资产保鲜 Watchdog")
 
 	// 1. 初始化统一应用依赖容器
 	container, err := app.NewContainer(app.ContainerOptions{
@@ -39,14 +42,14 @@ func (r *RootCmd) executePatrol(args []string) {
 		ExplicitDB: *storePath,
 	})
 	if err != nil {
-		logger.PrintError(fmt.Sprintf("初始化应用容器失败: %v", err))
+		logger.Error("容器初始化失败：%v", err)
 		return
 	}
 	defer container.Close()
 
 	store, err := container.GetStore()
 	if err != nil {
-		logger.PrintError(fmt.Sprintf("打开目标数据库失败: %v", err))
+		logger.Error("资产库打开失败：%v", err)
 		return
 	}
 
@@ -56,15 +59,13 @@ func (r *RootCmd) executePatrol(args []string) {
 
 	events := core.PatrolEvents{
 		OnLog: func(msg string) {
-			logger.PrintTimestampedMessage("%s", msg)
+			logger.Info("%s", msg)
 		},
 		OnTargetChecked: func(target *types.TargetRecord, success bool, ms int64, err error) {
 			if success {
-				logger.PrintTimestampedMessage("✅ [%-22s] 存活有效 | 握手: %dms | 剩余证书: %d天",
-					target.Domain, ms, target.CertDays)
+				logger.Linef(logger.IconOK, "复核通过", "%s 握手 %dms、证书剩余 %d 天", target.Domain, ms, target.CertDays)
 			} else {
-				logger.PrintTimestampedMessage("❌ [%-22s] 握手失败: %v (连续失败 %d 次)",
-					target.Domain, err, target.CheckFailCount+1)
+				logger.Linef(logger.IconError, "复核失败", "%s %v（连续失败 %d 次）", target.Domain, err, target.CheckFailCount+1)
 			}
 		},
 	}
@@ -77,7 +78,7 @@ func (r *RootCmd) executePatrol(args []string) {
 	go func() {
 		select {
 		case <-sigChan:
-			logger.PrintTimestampedMessage("🛑 捕获退出信号，巡检守护服务平滑停机...")
+			logger.Warn("退出信号：巡检守护服务平滑停机")
 			cancel()
 		case <-ctx.Done():
 		}
@@ -86,22 +87,25 @@ func (r *RootCmd) executePatrol(args []string) {
 	if *isDaemon {
 		cycleInterval := time.Duration(*intervalMin) * time.Minute
 		if err := watchdog.Start(ctx, cycleInterval); err != nil && err != context.Canceled {
-			logger.PrintError(fmt.Sprintf("巡检 Watchdog 异常: %v", err))
+			logger.Error("巡检 Watchdog 异常：%v", err)
 			return
 		}
 	} else {
 		// 单次巡检并输出汇总报告
 		report, err := watchdog.RunOnce(ctx)
 		if err != nil {
-			logger.PrintError(fmt.Sprintf("巡检执行失败: %v", err))
+			logger.Error("巡检执行失败：%v", err)
 			return
 		}
-		fmt.Println("\n=== 存量资产健康巡检汇总报告 ===")
-		fmt.Printf("检测资产总数 (Checked):      %d\n", report.TotalChecked)
-		fmt.Printf("存活有效目标 (Healthy):      %d\n", report.Successful)
-		fmt.Printf("异常或失效目标 (Unhealthy):  %d\n", report.Failed)
-		fmt.Printf("超期日志清理 (Cleaned Logs): %d 条\n", report.CleanedLogs)
-		fmt.Printf("失效资产清理 (Purged):       %d 个\n", report.CleanedTargets)
-		fmt.Printf("总巡检耗时 (Duration):       %v\n", report.Duration.Round(time.Millisecond))
+		logger.Blank()
+		logger.Block(
+			"存量资产健康巡检汇总报告",
+			"  "+logger.Alignment("复核资产总数 (Checked)", 28)+fmt.Sprintf("%d", report.TotalChecked),
+			"  "+logger.Alignment("存活有效目标 (Healthy)", 28)+fmt.Sprintf("%d", report.Successful),
+			"  "+logger.Alignment("异常或失效目标 (Unhealthy)", 28)+fmt.Sprintf("%d", report.Failed),
+			"  "+logger.Alignment("超期日志清理 (Cleaned Logs)", 28)+fmt.Sprintf("%d 条", report.CleanedLogs),
+			"  "+logger.Alignment("失效资产清理 (Purged)", 28)+fmt.Sprintf("%d 个", report.CleanedTargets),
+			"  "+logger.Alignment("总巡检耗时 (Duration)", 28)+report.Duration.Round(time.Millisecond).String(),
+		)
 	}
 }

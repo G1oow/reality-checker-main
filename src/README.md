@@ -37,6 +37,7 @@
 - **多形态接入服务体系**：
   - **RESTful API & SSE 流式长连接**：提供 `/api/targets/smart`、`/api/targets/stream`、`/api/targets/check` 标准接口，完美契合中间件与控制面板集成；
   - **嵌入式可视化控制台 (Web UI)**：基于 React + TypeScript 构建，支持单二进制内嵌分发（`go:embed`），可视化管理资产、ASN 队列与即时测算；
+  - **VPS 终端面板 (TUI)**：安装后一条 `rcm` 直接进入面板，发现阶段恒扫 IPv4 网段（入口 ASN / 国家 ASN，仅 IPv6 校验时按 VPS 所在国家 ASN），域名校验支持仅 IPv4 / 仅 IPv6 / 双栈（仅 IPv6 要求 AAAA 且走 tcp6），实时进度、一键停止、参数持久化，结果只在面板内展示（不写资产库）；
   - **高并发 CLI & 管道流式处理**：原生支持 `reality-checker pipe` 管道批量验证与 `Ctrl+C` 平滑中断输出。
 ---
 
@@ -240,6 +241,7 @@ filter:
 network:
   timeout: 3s
   retries: 1
+  family: ""                   # 目标连接协议族: "" 不限定 / ipv4 仅 IPv4 校验 / ipv6 仅 IPv6 校验 (仅 IPv6 时域名必须有 AAAA 记录)
 
 # 并发性能
 concurrency:
@@ -257,17 +259,13 @@ concurrency:
 
 ### 2. 本地构建
 
-需要 Go 1.25 或更高版本。构建产物自动输出到 `dist/`，包含 Linux `amd64`/`arm64` 和 Windows `amd64`（采用纯 Go 驱动，完全免 CGO 静态编译）：
+需要 Go 1.25 或更高版本。构建产物自动输出到 `dist/`，包含 Linux `amd64` / `arm64`（采用纯 Go 驱动，完全免 CGO 静态编译）：
 
 ```bash
-# Linux / macOS
 ./build.sh
 ```
 
-```powershell
-# Windows PowerShell
-.\build.ps1
-```
+> 本项目只支持 Linux。Windows 端的构建脚本与安装脚本已移除。
 
 ### 3. 数据文件与内置资产
 

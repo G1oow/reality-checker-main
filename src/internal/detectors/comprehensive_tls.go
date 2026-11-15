@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"RealityChecker/internal/network"
 	"RealityChecker/internal/types"
 )
 
@@ -94,7 +95,7 @@ func (cts *ComprehensiveTLSStage) performComprehensiveTLSDetection(ctx *types.Pi
 	}
 
 	// 仅当服务端未在首轮选择 X25519 时，才发起第二次专门强制 X25519 的探测
-	supportsX25519 := cts.checkX25519Support(domain, 3*time.Second)
+	supportsX25519 := cts.checkX25519Support(domain, 3*time.Second, dialFamilyOf(ctx))
 	firstResult.TLS.SupportsX25519 = supportsX25519
 
 	return firstResult
@@ -228,10 +229,8 @@ func (cts *ComprehensiveTLSStage) createFailedResult(startTime time.Time) *Compr
 	}
 }
 
-// checkX25519Support 检查X25519支持（正确的检测方法）
-func (cts *ComprehensiveTLSStage) checkX25519Support(domain string, timeout time.Duration) bool {
-	const port = ":443"
-
+// checkX25519Support 检查 X25519 支持（第二次专门握手，按目标协议族拨号）
+func (cts *ComprehensiveTLSStage) checkX25519Support(domain string, timeout time.Duration, family string) bool {
 	// 专门做一次"仅X25519"的握手
 	x25519Config := &tls.Config{
 		ServerName:       domain,
@@ -241,21 +240,26 @@ func (cts *ComprehensiveTLSStage) checkX25519Support(domain string, timeout time
 		MaxVersion:       tls.VersionTLS13,
 	}
 
-	conn, err := tls.DialWithDialer(&net.Dialer{
-		Timeout: timeout,
-	}, "tcp", domain+port, x25519Config)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
+	// 与首轮握手保持同一协议族，避免“仅 IPv6 校验”被悄悄解析到 IPv4 节点
+	dial := network.NewFamilyDialer(family, timeout)
+	tcpConn, err := dial(ctx, "tcp", net.JoinHostPort(domain, "443"))
 	if err != nil {
 		// X25519握手失败，说明不支持X25519
 		return false
 	}
-	defer conn.Close()
 
-	// 检查连接状态
-	state := conn.ConnectionState()
+	tlsConn := tls.Client(tcpConn, x25519Config)
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		_ = tcpConn.Close()
+		return false
+	}
+	defer tlsConn.Close()
 
 	// 握手成功且使用TLS1.3，说明支持X25519
-	return state.Version == tls.VersionTLS13
+	return tlsConn.ConnectionState().Version == tls.VersionTLS13
 }
 
 // CanEarlyExit 是否可以早期退出

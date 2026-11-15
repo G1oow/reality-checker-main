@@ -21,8 +21,8 @@ func NewIPResolverStage() *IPResolverStage {
 // Execute 执行IP解析
 func (irs *IPResolverStage) Execute(ctx *types.PipelineContext) error {
 
-	// 解析IP地址
-	ip, err := irs.resolveIP(ctx.Domain)
+	// 解析IP地址（按目标连接协议族挑选，仅 IPv6 时必须有 AAAA）
+	ip, err := irs.resolveIP(ctx.Domain, dialFamilyOf(ctx))
 	if err != nil {
 		return fmt.Errorf("IP解析失败: %v", err)
 	}
@@ -76,8 +76,8 @@ func dialAddress(ip, port string) string {
 	return net.JoinHostPort(ip, port)
 }
 
-// resolveIP 解析IP地址
-func (irs *IPResolverStage) resolveIP(domain string) (string, error) {
+// resolveIP 解析IP地址：按目标连接协议族挑选地址（不限定时优先 IPv4）
+func (irs *IPResolverStage) resolveIP(domain string, family string) (string, error) {
 	// 检查是否已经是IP地址
 	if net.ParseIP(domain) != nil {
 		return domain, nil
@@ -99,20 +99,54 @@ func (irs *IPResolverStage) resolveIP(domain string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return selectAddress(ips, family)
+}
 
-	if len(ips) == 0 {
-		return "", fmt.Errorf("未找到IP地址")
-	}
-
-	// 优先选择IPv4地址
+// selectAddress 按协议族挑选目标地址；限定协议族时必须有对应记录，否则给出明确原因
+func selectAddress(ips []net.IPAddr, family string) (string, error) {
+	normalized := network.NormalizeDialFamily(family)
 	for _, ipAddr := range ips {
-		if ipAddr.IP.To4() != nil {
-			return ipAddr.IP.String(), nil
+		if ipAddr.IP == nil {
+			continue
+		}
+		isIPv4 := ipAddr.IP.To4() != nil
+		switch normalized {
+		case "ipv4":
+			if isIPv4 {
+				return ipAddr.IP.String(), nil
+			}
+		case "ipv6":
+			if !isIPv4 {
+				return ipAddr.IP.String(), nil
+			}
+		default:
+			// 不限定协议族时保持原行为：优先 IPv4
+			if isIPv4 {
+				return ipAddr.IP.String(), nil
+			}
 		}
 	}
 
-	// 如果没有IPv4，使用IPv6
-	return ips[0].IP.String(), nil
+	switch normalized {
+	case "ipv4":
+		return "", fmt.Errorf("域名无 A 记录（已限定仅 IPv4 校验）")
+	case "ipv6":
+		return "", fmt.Errorf("域名无 AAAA 记录（已限定仅 IPv6 校验）")
+	}
+	for _, ipAddr := range ips {
+		if ipAddr.IP != nil {
+			return ipAddr.IP.String(), nil
+		}
+	}
+	return "", fmt.Errorf("未找到IP地址")
+}
+
+// dialFamilyOf 返回当前流水线要求的目标连接协议族
+func dialFamilyOf(ctx *types.PipelineContext) string {
+	if ctx != nil && ctx.Config != nil {
+		return network.NormalizeDialFamily(ctx.Config.Network.Family)
+	}
+	return ""
 }
 
 // CanEarlyExit 是否可以早期退出

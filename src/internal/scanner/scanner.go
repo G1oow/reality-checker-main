@@ -444,7 +444,7 @@ func (s *Scanner) ScanCIDRStreamAdaptive(ctx context.Context, cidrStr string, st
 				}
 
 				if logger.IsDebug() {
-					logger.Debug("正在尝试 TLS1.3/h2 握手 IP: %s:%d", host.IP.String(), port)
+					logger.Debug("握手尝试：%s:%d TLS1.3/h2", host.IP.String(), port)
 				}
 
 				if limiter != nil {
@@ -479,7 +479,7 @@ func (s *Scanner) ScanCIDRStreamAdaptive(ctx context.Context, cidrStr string, st
 				}
 				if res != nil {
 					if logger.IsDebug() {
-						logger.Debug("IP: %s 握手成功! 提取证书CN: %s, ALPN: %s, 加密套件: %s", host.IP.String(), res.CertDomain, res.ALPN, res.Curve)
+						logger.Debug("握手成功：%s 提取域名 %s（ALPN: %s，套件: %s）", host.IP.String(), res.CertDomain, res.ALPN, res.Curve)
 					}
 					select {
 					case outChan <- res:
@@ -487,7 +487,7 @@ func (s *Scanner) ScanCIDRStreamAdaptive(ctx context.Context, cidrStr string, st
 						return
 					}
 				} else if logger.IsDebug() {
-					logger.Debug("IP: %s 握手失败/未响应/非 TLS1.3+h2", host.IP.String())
+					logger.Debug("握手失败：%s 未响应或非 TLS1.3+h2", host.IP.String())
 				}
 			}
 		}()

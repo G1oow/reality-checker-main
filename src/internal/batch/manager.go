@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"RealityChecker/internal/core"
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/report"
 	"RealityChecker/internal/types"
 )
@@ -125,7 +126,7 @@ func (bm *Manager) CheckDomains(ctx context.Context, domains []string) ([]*types
 	batchReport := bm.generateBatchReport(results, startTime, time.Now())
 
 	// 打印报告
-	fmt.Println(bm.formatBatchReport(batchReport))
+	logger.Plain("%s", bm.formatBatchReport(batchReport))
 
 	return results, nil
 }
@@ -193,7 +194,7 @@ func (bm *Manager) CheckDomainsWithProgress(ctx context.Context, domains []strin
 			completed++
 
 			// 显示进度
-			fmt.Printf("[%s] 正在检测 [%d/%d]: %s... ", time.Now().Format("15:04:05"), completed, len(domains), progressResult.Domain)
+			logger.AboveBar(nil, "[%s] %s 扫描进度：%d/%d %s ", time.Now().Format("15:04:05"), logger.IconStep, completed, len(domains), progressResult.Domain)
 
 			filter := types.FilterConfig{}
 			if bm.config != nil {
@@ -201,12 +202,12 @@ func (bm *Manager) CheckDomainsWithProgress(ctx context.Context, domains []strin
 			}
 
 			if progressResult.Error != nil {
-				fmt.Printf("失败 - %v\n", progressResult.Error)
+				logger.AboveBar(nil, "失败 - %v\n", progressResult.Error)
 			} else if progressResult.Result.Suitable && progressResult.Result.Error == nil {
 				if passed, reason := core.FilterTarget(progressResult.Result, filter); passed {
-					fmt.Printf("适合\n")
+					logger.AboveBar(nil, "适合\n")
 				} else {
-					fmt.Printf("不适合 - %s\n", reason)
+					logger.AboveBar(nil, "不适合 - %s\n", reason)
 				}
 			} else {
 				// 获取不适合的原因
@@ -214,16 +215,17 @@ func (bm *Manager) CheckDomainsWithProgress(ctx context.Context, domains []strin
 				if progressResult.Result.Error != nil {
 					reason = progressResult.Result.Error.Error()
 				}
-				fmt.Printf("不适合 - %s\n", reason)
+				logger.AboveBar(nil, "不适合 - %s\n", reason)
 			}
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-timeout.C:
 			// 超时处理：显示未完成的域名
-			fmt.Printf("\n[%s] 检测超时，以下域名未完成检测：\n", time.Now().Format("15:04:05"))
+			logger.Blank()
+			logger.Warn("扫描超时：以下域名未完成")
 			for i, domain := range domains {
 				if results[i] == nil {
-					fmt.Printf("  - %s (超时)\n", domain)
+					logger.Detail("%s（超时）", domain)
 					// 创建超时结果
 					results[i] = &types.DetectionResult{
 						Domain:   domain,
@@ -316,9 +318,9 @@ func (bm *Manager) formatBatchReport(report *types.BatchReport) string {
 
 	// 报告头部
 	result.WriteString(fmt.Sprintf(`
-批量检测报告
+批量扫描报告
 总耗时: %s
-检测域名: %d 个
+扫描域名: %d 个
 成功率: %.1f%%
 适合性率: %.1f%%
 
@@ -367,7 +369,7 @@ func (bm *Manager) formatBatchReport(report *types.BatchReport) string {
 		// 按星级与延迟排序：1星在最上面，5星在最下面
 		bm.sortByRecommendationStars(suitableResults)
 
-		result.WriteString("适合的域名:\n\n")
+		result.WriteString("命中目标：\n\n")
 		result.WriteString(bm.tableFormatter.FormatSuitableTable(suitableResults))
 		result.WriteString("\n")
 	}
@@ -393,7 +395,7 @@ func (bm *Manager) formatExcludedDomains(excludedResults []*types.DetectionResul
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("状态码不自然的域名 (%d个):\n", len(excludedResults)))
+	result.WriteString(fmt.Sprintf("状态码不自然的域名（%d 个）:\n", len(excludedResults)))
 
 	// 统计各种状态码
 	statusCodeCounts := make(map[int]int)
@@ -412,7 +414,7 @@ func (bm *Manager) formatExcludedDomains(excludedResults []*types.DetectionResul
 
 	for _, statusCode := range statusCodes {
 		count := statusCodeCounts[statusCode]
-		result.WriteString(fmt.Sprintf("   - %d个状态码 %d\n", count, statusCode))
+		result.WriteString(fmt.Sprintf("   - %d 个状态码 %d\n", count, statusCode))
 	}
 
 	return result.String()

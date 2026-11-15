@@ -42,18 +42,11 @@ func NewDownloader(proxyURL ...string) *Downloader {
 	}
 }
 
-// printTimestampedMessage 打印带时间戳的消息
-func printTimestampedMessage(format string, args ...interface{}) {
-	timestamp := time.Now().Format("15:04:05")
-	message := fmt.Sprintf(format, args...)
-	fmt.Printf("[%s] %s\n", timestamp, message)
-}
-
 // EnsureDataFiles 确保所有数据文件存在且最新
 func (d *Downloader) EnsureDataFiles() error {
-	printTimestampedMessage("检查数据文件...")
+	logger.Step("数据文件检查")
 	if d.proxyURL != "" {
-		printTimestampedMessage("使用网络代理进行数据文件下载: %s", d.proxyURL)
+		logger.Info("数据文件下载：经代理 %s", d.proxyURL)
 	}
 
 	// 定义需要下载的数据文件（静态规则 cdn_keywords/hot_websites/exclude_rules 已通过 go:embed 内置，无需远程下载）
@@ -76,11 +69,11 @@ func (d *Downloader) EnsureDataFiles() error {
 	// 检查并下载每个文件
 	for _, file := range files {
 		if err := d.ensureFile(file); err != nil {
-			printTimestampedMessage("⚠️ 数据文件 %s 不可用: %v，将继续运行并在扫描时降级处理", file.Name, err)
+			logger.Warn("数据文件 %s 不可用：%v，将继续运行并在扫描时降级处理", file.Name, err)
 		}
 	}
 
-	printTimestampedMessage("数据文件检查完成。")
+	logger.Success("数据文件检查完成")
 	return nil
 }
 
@@ -101,16 +94,16 @@ func (d *Downloader) ensureFile(file DataFile) error {
 
 	// 如果文件不存在，直接下载；下载失败则尝试回退内置版本
 	if !exists {
-		printTimestampedMessage("下载 %s...", file.Name)
+		logger.Step("下载数据文件：%s", file.Name)
 		if err := d.downloadWithRetry(file); err != nil {
 			if file.Name == "Country.mmdb" {
 				if embData, embErr := GetEmbeddedCountryMMDB(); embErr == nil && len(embData) > 0 {
-					printTimestampedMessage("⚠️ 下载 %s 失败，回退释放并使用内置版本至 %s", file.Name, file.LocalPath)
+					logger.Warn("内置版本回退：%s 下载失败，已释放内置版本至 %s", file.Name, file.LocalPath)
 					writeErr := os.WriteFile(file.LocalPath, embData, 0644)
 					if writeErr == nil {
 						return nil
 					}
-					printTimestampedMessage("⚠️ 写入内置 %s 到 %s 失败: %v，将继续在内存中直接使用内置版本", file.Name, file.LocalPath, writeErr)
+					logger.Warn("内置版本写入失败：%s → %s（%v），将继续在内存中使用内置版本", file.Name, file.LocalPath, writeErr)
 					return nil
 				}
 			}
@@ -127,9 +120,9 @@ func (d *Downloader) ensureFile(file DataFile) error {
 
 	// 如果需要更新，下载新文件
 	if needsUpdate {
-		printTimestampedMessage("更新 %s...", file.Name)
+		logger.Step("更新数据文件：%s", file.Name)
 		if err := d.downloadWithRetry(file); err != nil {
-			printTimestampedMessage("⚠️ 更新 %s 失败 (%v)，继续沿用现有本地版本", file.Name, err)
+			logger.Warn("更新失败：%s（%v），继续沿用现有本地版本", file.Name, err)
 			return nil
 		}
 	}
@@ -170,7 +163,7 @@ func (d *Downloader) downloadWithRetry(file DataFile) error {
 
 	for i := 0; i < d.retries; i++ {
 		if i > 0 {
-			fmt.Printf("重试中... (%d/%d)\n", i, d.retries)
+			logger.Info("下载重试：%d/%d", i, d.retries)
 			time.Sleep(d.retryDelay)
 		}
 
@@ -179,7 +172,7 @@ func (d *Downloader) downloadWithRetry(file DataFile) error {
 			if err == nil {
 				return nil // 成功
 			}
-			fmt.Printf("警告：从 %s 下载 %s 失败: %v\n", targetURL, file.Name, err)
+			logger.Warn("下载失败：%s（源 %s，%v）", file.Name, targetURL, err)
 		}
 	}
 
@@ -195,7 +188,7 @@ func (d *Downloader) downloadWithRetry(file DataFile) error {
 
 // downloadFileFromURL 从指定 URL 下载单个文件
 func (d *Downloader) downloadFileFromURL(file DataFile, downloadURL string) error {
-	logger.Info("downloading file %s from %s", file.Name, downloadURL)
+	logger.Info("下载数据文件：%s，来源 %s", file.Name, downloadURL)
 	tr, err := network.MakeHTTPTransport(d.proxyURL, d.timeout)
 	if err != nil {
 		return fmt.Errorf("配置下载传输失败: %w", err)
@@ -254,11 +247,11 @@ func (d *Downloader) downloadFileFromURL(file DataFile, downloadURL string) erro
 
 // showManualDownloadInstructions 显示手动下载说明
 func (d *Downloader) showManualDownloadInstructions() {
-	fmt.Println("GeoIP 数据库暂不可用，归属地检测将使用降级模式。")
-	fmt.Println("（注：CDN 特征库、热门大站与排除规则已内置，无需额外下载）")
-	fmt.Println()
-	fmt.Println("如需补齐 GeoIP 数据库，可手动下载 Country.mmdb 到 data/ 目录：")
-	fmt.Println("  https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb")
-	fmt.Println()
-	fmt.Println("补齐后下次运行时将自动加载。")
+	logger.Warn("GeoIP 数据库不可用：归属地查询将使用降级模式")
+	logger.Detail("CDN 特征库、热门大站与排除规则已内置，无需额外下载")
+	logger.Blank()
+	logger.Plain("补齐 GeoIP 数据库：可手动下载 Country.mmdb 到 data/ 目录")
+	logger.Plain("  https://github.com/Loyalsoldier/geoip/releases/latest/download/Country.mmdb")
+	logger.Blank()
+	logger.Plain("补齐后下次运行时将自动加载")
 }

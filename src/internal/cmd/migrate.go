@@ -18,6 +18,9 @@ import (
 func (r *RootCmd) executeMigrate(args []string) {
 	flags := flag.NewFlagSet("migrate", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
+	flags.Usage = func() {
+		PrintCommandUsage("migrate [选项]", "在 SQLite 与 PostgreSQL 之间平滑迁移资产数据", flags)
+	}
 
 	fromFlag := flags.String("from", "data/reality_targets.db", "源数据库路径或连接串 (默认: data/reality_targets.db)")
 	flags.StringVar(fromFlag, "from-sqlite", "data/reality_targets.db", "源 SQLite 数据库路径 (别名)")
@@ -41,13 +44,13 @@ func (r *RootCmd) executeMigrate(args []string) {
 	if *configFlag != "" {
 		reloadedCfg, err := config.LoadConfig(*configFlag)
 		if err != nil {
-			logger.PrintError(fmt.Sprintf("加载指定配置文件失败 (%s): %v", *configFlag, err))
+			logger.Error("配置加载失败：%s（%v）", *configFlag, err)
 			return
 		}
 		r.config = reloadedCfg
 	}
 
-	logger.PrintTimestampedMessage("🚀 正在启动 REALITY 数据库平滑迁移作业...")
+	logger.Step("迁移作业启动：数据库平滑迁移")
 
 	// 1. 初始化源存储
 	srcDriver := "sqlite"
@@ -65,7 +68,7 @@ func (r *RootCmd) executeMigrate(args []string) {
 
 	srcStore, err := storage.NewStore(srcCfg)
 	if err != nil {
-		logger.PrintError(fmt.Sprintf("打开源数据库失败 (%s): %v", *fromFlag, err))
+		logger.Error("源库打开失败：%s（%v）", *fromFlag, err)
 		return
 	}
 	defer srcStore.Close()
@@ -116,7 +119,7 @@ func (r *RootCmd) executeMigrate(args []string) {
 		} else if r.config != nil && r.config.Database.Driver != "" {
 			dstCfg = &r.config.Database
 		} else {
-			logger.PrintError("未指定目标数据库！请通过 --to 指定 PostgreSQL DSN 或在 config.yaml 中配置 database.postgres")
+			logger.Error("目标库缺失：请用 --to 指定 PostgreSQL DSN，或在 config.yaml 配置 database.postgres")
 			return
 		}
 	}
@@ -132,9 +135,9 @@ func (r *RootCmd) executeMigrate(args []string) {
 		}
 		pg := dstCfg.Postgres
 		if pg.DSN != "" {
-			logger.PrintTimestampedMessage("🔗 目标数据库: PostgreSQL (来源: %s)", sourceDesc)
+			logger.Linef(logger.IconStep, "目标库", "PostgreSQL（来源: %s）", sourceDesc)
 		} else {
-			logger.PrintTimestampedMessage("🔗 目标数据库: PostgreSQL %s:%d/%s (用户: %s, 来源: %s)", pg.Host, pg.Port, pg.DBName, pg.User, sourceDesc)
+			logger.Linef(logger.IconStep, "目标库", "PostgreSQL %s:%d/%s（用户 %s，来源 %s）", pg.Host, pg.Port, pg.DBName, pg.User, sourceDesc)
 		}
 	}
 
@@ -142,16 +145,14 @@ func (r *RootCmd) executeMigrate(args []string) {
 	if err != nil {
 		if dstCfg.Driver == "postgres" {
 			appName := version.GetAppName()
-			logger.PrintErrorWithDetails(
-				fmt.Sprintf("连接目标数据库失败: %v", err),
-				"💡 排查建议:",
-				"  1. 确认当前目录下是否存在未修改的 config.yaml (系统默认 config.yaml 优先级高于 config.yml)",
-				fmt.Sprintf("  2. 可使用 -c 指定配置文件: ./%s -c config.yml migrate", appName),
-				fmt.Sprintf("  3. 或直接通过 --to 指定完整 DSN: ./%s migrate --to \"postgres://rchecker:passwd@127.0.0.1:5432/reality?sslmode=disable\"", appName),
-				"  4. 检查 PostgreSQL 的 pg_hba.conf 是否放通本地或对应用户的 md5/scram-sha-256 密码认证",
-			)
+			logger.Error("目标库连接失败：%v", err)
+			logger.Detail("排查建议：")
+			logger.Detail("1. 确认当前目录下是否存在未修改的 config.yaml（系统默认 config.yaml 优先级高于 config.yml）")
+			logger.Detail("2. 可使用 -c 指定配置文件: ./%s -c config.yml migrate", appName)
+			logger.Detail("3. 或直接通过 --to 指定完整 DSN: ./%s migrate --to \"postgres://rchecker:passwd@127.0.0.1:5432/reality?sslmode=disable\"", appName)
+			logger.Detail("4. 检查 PostgreSQL 的 pg_hba.conf 是否放通本地或对应用户的 md5/scram-sha-256 密码认证")
 		} else {
-			logger.PrintError(fmt.Sprintf("连接目标数据库失败: %v", err))
+			logger.Error("目标库连接失败：%v", err)
 		}
 		return
 	}
@@ -160,15 +161,15 @@ func (r *RootCmd) executeMigrate(args []string) {
 	start := time.Now()
 
 	// 3. 迁移目标资产 (reality_targets)
-	logger.PrintTimestampedMessage("正在导出源库所有有效资产记录...")
+	logger.Step("导出资产：读取源库全部有效记录")
 	targets, err := srcStore.GetAllTargets()
 	if err != nil {
-		logger.PrintError(fmt.Sprintf("读取源库资产失败: %v", err))
+		logger.Error("资产读取失败：%v", err)
 		return
 	}
 
 	totalTargets := len(targets)
-	logger.PrintTimestampedMessage("共检索到 %d 条有效资产，开始批量注入目标库 (步长: %d)...", totalTargets, *batchSize)
+	logger.Linef(logger.IconStep, "资产迁移", "%d 条有效资产，批量步长 %d", totalTargets, *batchSize)
 
 	for i := 0; i < totalTargets; i += *batchSize {
 		end := i + *batchSize
@@ -177,16 +178,16 @@ func (r *RootCmd) executeMigrate(args []string) {
 		}
 		chunk := targets[i:end]
 		if err := dstStore.UpsertTargets(chunk); err != nil {
-			logger.PrintError(fmt.Sprintf("写入目标库资产失败 (范围 %d-%d): %v", i, end, err))
+			logger.Error("资产写入失败：范围 %d-%d（%v）", i, end, err)
 			return
 		}
 	}
 
 	// 4. 迁移 ASN 任务注册表 (asn_registry)
-	logger.PrintTimestampedMessage("正在导出源库 ASN 注册表...")
+	logger.Step("导出 ASN 注册表")
 	asns, err := srcStore.ListASNs("", 0, 100000, 0)
 	if err == nil && len(asns) > 0 {
-		logger.PrintTimestampedMessage("共检索到 %d 条 ASN 注册记录，正在同步...", len(asns))
+		logger.Linef(logger.IconStep, "ASN 同步", "%d 条注册记录", len(asns))
 		for i := 0; i < len(asns); i += *batchSize {
 			end := i + *batchSize
 			if end > len(asns) {
@@ -194,12 +195,12 @@ func (r *RootCmd) executeMigrate(args []string) {
 			}
 			chunk := asns[i:end]
 			if err := dstStore.UpsertASNRecords(chunk); err != nil {
-				logger.PrintTimestampedMessage("⚠️ 同步部分 ASN 记录失败: %v", err)
+				logger.Warn("ASN 同步中断：%v", err)
 				break
 			}
 		}
 	}
 
 	elapsed := time.Since(start)
-	logger.PrintTimestampedMessage("🎉 数据库迁移圆满完成！累计同步 %d 条资产与 %d 个 ASN 记录，耗时: %v", totalTargets, len(asns), elapsed)
+	logger.Success("迁移完成：同步 %d 条资产、%d 个 ASN 记录（耗时 %v）", totalTargets, len(asns), elapsed)
 }

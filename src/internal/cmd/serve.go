@@ -20,6 +20,9 @@ import (
 func (r *RootCmd) executeServe(args []string) {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
+	flags.Usage = func() {
+		PrintCommandUsage("serve [选项]", "启动 Headless REST/SSE 服务（供 Web 控制台与外部面板调用）", flags)
+	}
 
 	portFlag := flags.Int("port", 8881, "HTTP 服务监听端口")
 	hostFlag := flags.String("host", "0.0.0.0", "HTTP 服务监听地址")
@@ -42,18 +45,18 @@ func (r *RootCmd) executeServe(args []string) {
 		ExplicitMMDB: *mmdbFlag,
 	})
 	if err != nil {
-		logger.PrintError(fmt.Sprintf("初始化应用容器失败: %v", err))
+		logger.Error("容器初始化失败：%v", err)
 		return
 	}
 	defer container.Close()
 
 	if _, err := container.GetStore(); err != nil {
-		logger.PrintTimestampedMessage("⚠️ 资产数据库初始化失败: %v (将使用无缓存模式运行)", err)
+		logger.Warn("资产库初始化失败：%v（改用无缓存模式）", err)
 	}
 
 	provService, err := container.GetProvisionService()
 	if err != nil {
-		logger.PrintError(fmt.Sprintf("构建供给业务服务失败: %v", err))
+		logger.Error("供给服务构建失败：%v", err)
 		return
 	}
 
@@ -73,32 +76,36 @@ func (r *RootCmd) executeServe(args []string) {
 	targetServer := server.NewTargetServer(srvConfig, provService)
 
 	// 4. 打印启动信息
-	fmt.Println()
-	fmt.Printf("🌐 RealityChecker API & Web 控制台服务启动中 [%s]\n", version.GetVersion())
-	fmt.Printf("   » 监听地址: http://%s\n", addr)
-	fmt.Printf("   » Web 控制台: http://%s/\n", addr)
-	fmt.Printf("   » 资产数据库: %s\n", *dbFlag)
+	logger.Blank()
+	lines := []string{
+		fmt.Sprintf("%s RealityChecker API 与 Web 控制台启动中 [%s]", logger.IconStep, version.GetVersion()),
+		"  " + logger.Alignment("监听地址", 14) + fmt.Sprintf("http://%s", addr),
+		"  " + logger.Alignment("Web 控制台", 14) + fmt.Sprintf("http://%s/", addr),
+		"  " + logger.Alignment("资产数据库", 14) + *dbFlag,
+	}
 	if apiToken != "" {
 		prefixLen := 4
 		if len(apiToken) < 4 {
 			prefixLen = len(apiToken)
 		}
-		fmt.Printf("   » 接口鉴权: 已启用 (Token: %s***)\n", apiToken[:prefixLen])
+		lines = append(lines, "  "+logger.Alignment("接口鉴权", 14)+fmt.Sprintf("已启用（Token: %s***）", apiToken[:prefixLen]))
 	} else {
-		fmt.Println("   » 接口鉴权: 未启用 (公网暴露建议配置 --token 或在 config.yaml 启用)")
+		lines = append(lines, "  "+logger.Alignment("接口鉴权", 14)+"未启用（公网暴露建议配置 --token 或在 config.yaml 启用）")
 	}
 	if container.GetGeoIP() != nil {
-		fmt.Printf("   » GeoIP 数据库: %s\n", *mmdbFlag)
+		lines = append(lines, "  "+logger.Alignment("GeoIP 数据库", 14)+*mmdbFlag)
 	}
-	fmt.Println("   » API 端点:")
-	fmt.Printf("     • 智能同ASN权重: GET http://%s/api/targets/smart?ip=<IP>&limit=10\n", addr)
-	fmt.Printf("     • 资产全量管理: GET http://%s/api/targets?page=1&page_size=20\n", addr)
-	fmt.Printf("     • 资产概览统计: GET http://%s/api/stats\n", addr)
-	fmt.Printf("     • SSE 流式探测: GET http://%s/api/targets/stream?ip=<IP>&limit=5\n", addr)
-	fmt.Printf("     • 健康检查探测: GET http://%s/api/health\n", addr)
-	fmt.Println()
-	logger.PrintTimestampedMessage("服务就绪，按 Ctrl+C 优雅退出...")
-
+	lines = append(lines,
+		"  "+logger.Alignment("API 端点", 14),
+		"      "+logger.Alignment("智能同 ASN 权重", 18)+fmt.Sprintf("GET http://%s/api/targets/smart?ip=<IP>&limit=10", addr),
+		"      "+logger.Alignment("资产全量管理", 18)+fmt.Sprintf("GET http://%s/api/targets?page=1&page_size=20", addr),
+		"      "+logger.Alignment("资产概览统计", 18)+fmt.Sprintf("GET http://%s/api/stats", addr),
+		"      "+logger.Alignment("SSE 流式扫描", 18)+fmt.Sprintf("GET http://%s/api/targets/stream?ip=<IP>&limit=5", addr),
+		"      "+logger.Alignment("服务健康", 18)+fmt.Sprintf("GET http://%s/api/health", addr),
+	)
+	logger.Block(lines...)
+	logger.Blank()
+	logger.Step("服务就绪：按 Ctrl+C 优雅退出")
 
 	// 5. 启动服务与优雅停机
 	errChan := make(chan error, 1)
@@ -113,15 +120,15 @@ func (r *RootCmd) executeServe(args []string) {
 
 	select {
 	case err := <-errChan:
-		logger.PrintError(fmt.Sprintf("❌ 服务异常终止: %v", err))
+		logger.Error("服务异常终止：%v", err)
 	case <-sigChan:
-		logger.PrintTimestampedMessage("正在平滑关闭 HTTP 服务...")
+		logger.Step("HTTP 服务平滑关闭")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := targetServer.Shutdown(shutdownCtx); err != nil {
-			logger.PrintError(fmt.Sprintf("强制终止服务: %v", err))
+			logger.Error("服务强制终止：%v", err)
 		} else {
-			logger.PrintTimestampedMessage("HTTP 服务已安全关闭。")
+			logger.Success("HTTP 服务已关闭")
 		}
 	case <-r.ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

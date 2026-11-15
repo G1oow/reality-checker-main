@@ -20,6 +20,10 @@ const (
 	LevelError
 )
 
+// Logger 统一日志与人类可读信息输出器
+//
+// 输出目标固定为 stderr（可再镜像到日志文件），stdout 保留给机器可读数据。
+// 每行格式：[HH:MM:SS] <图标> <内容>
 type Logger struct {
 	mu         sync.Mutex
 	level      Level
@@ -32,13 +36,13 @@ var globalLogger *Logger = NewLogger("info", "")
 func NewLogger(levelStr string, logFile string) *Logger {
 	l := &Logger{
 		level: parseLevel(levelStr),
-		out:   os.Stdout,
+		out:   os.Stderr,
 	}
 	if logFile != "" {
 		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err == nil {
 			l.fileWriter = f
-			l.out = io.MultiWriter(os.Stdout, f)
+			l.out = io.MultiWriter(os.Stderr, f)
 		}
 	}
 	return l
@@ -46,6 +50,18 @@ func NewLogger(levelStr string, logFile string) *Logger {
 
 func Init(levelStr string, logFile string) {
 	globalLogger = NewLogger(levelStr, logFile)
+}
+
+// SetOutput 覆盖人类可读信息的输出目标（测试使用）
+func SetOutput(w io.Writer) {
+	globalLogger.mu.Lock()
+	defer globalLogger.mu.Unlock()
+	globalLogger.out = w
+}
+
+// writer 返回当前输出目标
+func (l *Logger) writer() io.Writer {
+	return l.out
 }
 
 func parseLevel(l string) Level {
@@ -63,81 +79,67 @@ func parseLevel(l string) Level {
 	}
 }
 
-
 func IsDebug() bool {
 	return globalLogger.level <= LevelDebug
 }
 
-// safePrint 在打印日志前清掉进度条，打印完毕后让进度条重新出现在下一行
+// AboveBar 在打印日志前清掉进度条，打印完毕后让进度条重新出现在下一行
 func AboveBar(bar *progressbar.ProgressBar, format string, a ...any) {
 	if bar != nil {
-		_ = bar.Clear() // 1. 擦除当前行的进度条
+		_ = bar.Clear()
 	}
-	fmt.Printf(format, a...) // 2. 正常打印业务日志（自带换行）
+	fmt.Fprintf(globalLogger.writer(), format, a...)
 	if bar != nil {
-		_ = bar.RenderBlank() // 3. 立即重新在最下方把进度条画出来
+		_ = bar.RenderBlank()
 	}
 }
 
 func Debug(format string, args ...interface{}) {
 	if globalLogger.level <= LevelDebug {
-		logMsg("DEBUG", format, args...)
+		logMsg(IconDetail, format, args...)
 	}
 }
 
 func Info(format string, args ...interface{}) {
 	if globalLogger.level <= LevelInfo {
-		logMsg("INFO", format, args...)
+		logMsg(IconStep, format, args...)
 	}
 }
 
 func Warn(format string, args ...interface{}) {
 	if globalLogger.level <= LevelWarn {
-		logMsg("WARN", format, args...)
+		logMsg(IconWarn, format, args...)
 	}
 }
 
 func Error(format string, args ...interface{}) {
 	if globalLogger.level <= LevelError {
-		logMsg("ERROR", format, args...)
+		logMsg(IconError, format, args...)
 	}
 }
 
-func logMsg(tag string, format string, args ...interface{}) {
-	globalLogger.mu.Lock()
-	defer globalLogger.mu.Unlock()
-	timestamp := time.Now().Format("15:04:05.000")
-	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(globalLogger.out, "[%s] [%s] %s\n", timestamp, tag, msg)
-}
-
-// PrintTimestampedMessage 打印带时间戳的控制台消息（兼容原 ui 包行为并安全输出至 logger 目标）
-func PrintTimestampedMessage(format string, args ...interface{}) {
+func logMsg(icon string, format string, args ...interface{}) {
 	globalLogger.mu.Lock()
 	defer globalLogger.mu.Unlock()
 	timestamp := time.Now().Format("15:04:05")
 	msg := fmt.Sprintf(format, args...)
-	fmt.Fprintf(globalLogger.out, "[%s] %s\n", timestamp, msg)
+	fmt.Fprintf(globalLogger.out, "[%s] %s %s\n", timestamp, icon, msg)
 }
 
-// PrintError 打印错误信息（带空行间距）
+// PrintTimestampedMessage 打印一行信息（等价于 Info，保留兼容旧调用点）
+func PrintTimestampedMessage(format string, args ...interface{}) {
+	Info(format, args...)
+}
+
+// PrintError 打印一行错误信息
 func PrintError(message string) {
-	globalLogger.mu.Lock()
-	defer globalLogger.mu.Unlock()
-	fmt.Fprintln(globalLogger.out)
-	fmt.Fprintln(globalLogger.out, message)
-	fmt.Fprintln(globalLogger.out)
+	Error("%s", message)
 }
 
-// PrintErrorWithDetails 打印错误信息和详细说明
+// PrintErrorWithDetails 打印错误信息与随后的细节说明行
 func PrintErrorWithDetails(message string, details ...string) {
-	globalLogger.mu.Lock()
-	defer globalLogger.mu.Unlock()
-	fmt.Fprintln(globalLogger.out)
-	fmt.Fprintln(globalLogger.out, message)
+	Error("%s", message)
 	for _, detail := range details {
-		fmt.Fprintln(globalLogger.out, detail)
+		Detail("%s", detail)
 	}
-	fmt.Fprintln(globalLogger.out)
 }
-

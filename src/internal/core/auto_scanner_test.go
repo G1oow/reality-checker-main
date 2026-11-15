@@ -108,3 +108,20 @@ func TestAutoScanner_CandidateRejectedEvent(t *testing.T) {
 	}
 }
 
+func TestCidrIsIPv6(t *testing.T) {
+	cases := map[string]bool{
+		"198.51.100.0/24": false,
+		"10.0.0.0/8":      false,
+		"198.51.100.7":    false,
+		"2001:db8::/126":  true,
+		"2001:db8::1":     true,
+		" 2001:db8::1  ":  true,
+		"":                false,
+		"not-a-cidr":      false,
+	}
+	for cidr, want := range cases {
+		if got := cidrIsIPv6(cidr); got != want {
+			t.Fatalf("cidrIsIPv6(%q) = %v，期望 %v（IPv6 网段曾被硬编码开关静默跳过）", cidr, got, want)
+		}
+	}
+}

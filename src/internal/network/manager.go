@@ -36,6 +36,9 @@ func NewConnectionManager(config *types.Config) *ConnectionManager {
 		if dc, err := MakeDialContext(config.Proxy.URL, timeout); err == nil && dc != nil {
 			dialContext = dc
 		}
+	} else if config != nil {
+		// 未走扫描代理时，按配置把目标连接固定到指定协议族（仅 IPv4 / 仅 IPv6）
+		dialContext = FamilyDialContext(dialContext, config.Network.Family)
 	}
 
 	return &ConnectionManager{

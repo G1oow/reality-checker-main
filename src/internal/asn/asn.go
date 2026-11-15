@@ -18,6 +18,7 @@ import (
 const (
 	defaultAnnouncedEndpoint = "https://stat.ripe.net/data/announced-prefixes/data.json"
 	defaultOverviewEndpoint  = "https://stat.ripe.net/data/prefix-overview/data.json"
+	defaultCountryEndpoint   = "https://stat.ripe.net/data/country-resource-list/data.json"
 )
 
 // ASNResolver defines operations for resolving ASN and network prefixes.
@@ -31,6 +32,7 @@ type Client struct {
 	httpClient       *http.Client
 	endpoint         string
 	overviewEndpoint string
+	countryEndpoint  string
 }
 
 // NewClient creates an ASN client with a bounded request timeout.
@@ -52,6 +54,7 @@ func NewClientWithProxy(proxyURL string, timeout ...time.Duration) *Client {
 		httpClient:       httpClient,
 		endpoint:         defaultAnnouncedEndpoint,
 		overviewEndpoint: defaultOverviewEndpoint,
+		countryEndpoint:  defaultCountryEndpoint,
 	}
 }
 
@@ -69,6 +72,13 @@ func (c *Client) SetEndpoints(announcedEndpoint, overviewEndpoint string) {
 	}
 	if overviewEndpoint != "" {
 		c.overviewEndpoint = overviewEndpoint
+	}
+}
+
+// SetCountryEndpoint configures the country resource list endpoint (primarily for testing).
+func (c *Client) SetCountryEndpoint(endpoint string) {
+	if endpoint != "" {
+		c.countryEndpoint = endpoint
 	}
 }
 
@@ -222,4 +232,3 @@ func FilterIPVersion(prefixes []string, ipv4Only, ipv6Only bool) []string {
 	}
 	return filtered
 }
-
