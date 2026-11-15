@@ -1,0 +1,32 @@
+# Release 更新说明的自动分类规则（GitHub 按 PR 上的 label 分组）
+# 没打 label 的条目会落到「其他变更」里，因此想分类清晰就给 PR 打 label。
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+    authors:
+      - 'github-actions[bot]'
+      - 'dependabot[bot]'
+  categories:
+    - title: 🚀 新功能
+      labels:
+        - feat
+        - feature
+        - enhancement
+    - title: 🐛 问题修复
+      labels:
+        - fix
+        - bug
+        - bugfix
+    - title: ♻️ 重构与性能
+      labels:
+        - refactor
+        - perf
+        - performance
+    - title: 📝 文档
+      labels:
+        - docs
+        - documentation
+    - title: 🧰 其他变更
+      labels:
+        - '*'
