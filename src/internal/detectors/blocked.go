@@ -3,9 +3,10 @@ package detectors
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"strings"
 
+	"RealityChecker/internal/data"
+	"RealityChecker/internal/logger"
 	"RealityChecker/internal/types"
 )
 
@@ -67,39 +68,46 @@ func (bs *BlockedStage) checkBlocked(domain string) (bool, string) {
 	return false, ""
 }
 
-// loadGFWList 加载GFWList
+// loadGFWList 加载 GFW 名单：优先读取外部 data/gfwlist.conf，缺失时回退内置资源 gfwlist.conf
 func (bs *BlockedStage) loadGFWList() {
-	file, err := os.Open("data/gfwlist.conf")
+	reader, err := data.OpenRuleReader("data/gfwlist.conf", "gfwlist.conf")
 	if err != nil {
+		logger.Warn("GFW 名单不可用：%v，将跳过该检测", err)
 		return
 	}
-	defer file.Close()
+	defer reader.Close()
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(reader)
 	inPayload := false
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
 
 		if line == "payload:" {
 			inPayload = true
 			continue
 		}
 
-		if !inPayload {
+		// Clash 规则格式：payload 段内的 "  - '+.domain'"
+		if inPayload {
+			if strings.HasPrefix(line, "- '") && strings.HasSuffix(line, "'") {
+				domain := strings.TrimPrefix(line, "- '")
+				domain = strings.TrimSuffix(domain, "'")
+
+				domain = strings.TrimPrefix(domain, "+.")
+
+				if domain != "" {
+					bs.gfwlist[domain] = true
+				}
+			}
 			continue
 		}
 
-		if strings.HasPrefix(line, "- '") && strings.HasSuffix(line, "'") {
-			domain := strings.TrimPrefix(line, "- '")
-			domain = strings.TrimSuffix(domain, "'")
-
-			domain = strings.TrimPrefix(domain, "+.")
-
-			if domain != "" {
-				bs.gfwlist[domain] = true
-			}
-		}
+		// 兼容每行一个纯域名的格式
+		bs.gfwlist[line] = true
 	}
 }
 

@@ -380,7 +380,9 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 		targetCountry = overridden
 	}
 
-	asnNumber, prefixes, err := asn.NewClient(15*time.Second).PrefixesForIP(ctx, ip.String())
+	asnClient := asn.NewClient(15 * time.Second)
+	resolver := asn.NewCountryResolver(asnClient, reader)
+	asnNumber, prefixes, err := asnClient.PrefixesForIP(ctx, ip.String())
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -400,13 +402,15 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 		if filter.IPv6Only && !prefix.Addr().Is6() {
 			continue
 		}
-		// 本地库有记录时按国家严格过滤；查不到（IPv6 段覆盖不全很常见）时保留，
-		// 因为该网段确实属于这个 ASN，仅凭本地库缺失不足以否认它。
-		switch prefixCountry(reader, prefix.Addr()) {
-		case targetCountry:
-			filtered = append(filtered, prefix.String())
-		case "":
+		// 国家归属优先用 RIPE 国家前缀集合，取不到时回退本地 mmdb；
+		// 两条数据源均无结论（IPv6 覆盖不全很常见）时保留该网段，
+		// 因为该网段确实属于这个 ASN，仅凭缺失不足以否认它。
+		matched, source := resolver.MatchAddr(ctx, targetCountry, prefix.Addr())
+		switch {
+		case source == asn.CountrySourceNone:
 			unknown++
+			filtered = append(filtered, prefix.String())
+		case matched:
 			filtered = append(filtered, prefix.String())
 		}
 	}
@@ -414,7 +418,7 @@ func resolveAutoInput(ctx context.Context, targetInput string, inFile string, co
 		return nil, asnStr, targetCountry, fmt.Errorf("AS%d 没有与入口 IP 同国家（%s）且符合 IP 协议族限制的宣布网段", asnNumber, targetCountry)
 	}
 	if unknown > 0 {
-		logger.Linef(logger.IconStep, "入口解析", "%s 归属 %s（%s），已过滤为 %d 个网段，其中 %d 个本地库无归属记录", targetInput, asnStr, targetCountry, len(filtered), unknown)
+		logger.Linef(logger.IconStep, "入口解析", "%s 归属 %s（%s），已过滤为 %d 个网段，其中 %d 个归属数据源无记录", targetInput, asnStr, targetCountry, len(filtered), unknown)
 		return filtered, asnStr, targetCountry, nil
 	}
 	logger.Linef(logger.IconStep, "入口解析", "%s 归属 %s（%s），已过滤为 %d 个同国家网段", targetInput, asnStr, targetCountry, len(filtered))
@@ -448,19 +452,6 @@ func resolveTargetCountry(ctx context.Context, reader *geoip2.Reader, ip net.IP,
 	}
 	logger.Linef(logger.IconDetail, "归属查询", "%s 归属 %s", targetInput, code)
 	return code
-}
-
-// prefixCountry 返回网段代表地址的国家代码；本地库缺失时返回空串（不发起在线查询，
-// 避免对每个前缀都打一次外部接口）。
-func prefixCountry(reader *geoip2.Reader, addr netip.Addr) string {
-	if reader == nil || !addr.IsValid() {
-		return ""
-	}
-	rec, err := reader.Country(net.ParseIP(addr.String()))
-	if err != nil || rec == nil {
-		return ""
-	}
-	return strings.ToUpper(strings.TrimSpace(rec.Country.IsoCode))
 }
 
 // appendCIDR 解析并追加 CIDR 或单 IP 扩展网段，自动去重并规范化

@@ -64,14 +64,15 @@ type DaemonEvents struct {
 
 // DaemonScheduler 全网 24小时无人值守 ASN 扫描调度中枢
 type DaemonScheduler struct {
-	engine        *Engine
-	store         storage.Store
-	scannerEngine *scanner.Scanner
-	asnClient     *asnclient.Client
-	geoipReader   *geoip2.Reader
-	config        DaemonConfig
-	events        DaemonEvents
-	randSource    *rand.Rand
+	engine          *Engine
+	store           storage.Store
+	scannerEngine   *scanner.Scanner
+	asnClient       *asnclient.Client
+	geoipReader     *geoip2.Reader
+	config          DaemonConfig
+	events          DaemonEvents
+	randSource      *rand.Rand
+	countryResolver *asnclient.CountryResolver
 }
 
 // NewDaemonScheduler 创建守护调度引擎
@@ -90,15 +91,17 @@ func NewDaemonScheduler(
 		cfg.CycleInterval = 10 * time.Second
 	}
 
+	asnClient := asnclient.NewClient(15 * time.Second)
 	return &DaemonScheduler{
-		engine:        engine,
-		store:         store,
-		scannerEngine: scannerEngine,
-		asnClient:     asnclient.NewClient(15 * time.Second),
-		geoipReader:   geoipReader,
-		config:        cfg,
-		events:        events,
-		randSource:    rand.New(rand.NewSource(time.Now().UnixNano())),
+		engine:          engine,
+		store:           store,
+		scannerEngine:   scannerEngine,
+		asnClient:       asnClient,
+		geoipReader:     geoipReader,
+		config:          cfg,
+		events:          events,
+		randSource:      rand.New(rand.NewSource(time.Now().UnixNano())),
+		countryResolver: asnclient.NewCountryResolver(asnClient, geoipReader),
 	}
 }
 
@@ -265,10 +268,18 @@ func (d *DaemonScheduler) processASN(ctx context.Context, rec *types.ASNRecord) 
 	if d.config.CountryFilter != "" {
 		country = d.config.CountryFilter
 	}
-	if country != "" && d.geoipReader != nil {
-		filtered, err := asnclient.FilterByCountry(prefixes, d.geoipReader, country)
-		if err == nil && len(filtered) > 0 {
-			prefixes = filtered
+	// 国家归属优先使用 RIPE 国家前缀集合，取不到时回退本地 GeoIP mmdb（GeoIP 离线库仅作兜底）
+	if country != "" && d.countryResolver != nil {
+		total := len(prefixes)
+		kept, source := d.countryResolver.FilterPrefixes(ctx, prefixes, country)
+		switch {
+		case source == asnclient.CountrySourceNone:
+			d.log("%s 国家过滤跳过：RIPE 与本地 GeoIP 均无 %s 的归属数据", asnStr, country)
+		case len(kept) == 0:
+			d.log("%s 国家过滤：数据源 %s，%d 个网段均不属于 %s", asnStr, source, total, country)
+		default:
+			d.log("%s 国家过滤：数据源 %s，保留 %d/%d 个属于 %s 的网段", asnStr, source, len(kept), total, country)
+			prefixes = kept
 		}
 	}
 

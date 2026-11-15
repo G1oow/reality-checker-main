@@ -1,8 +1,11 @@
 package data
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -77,4 +80,64 @@ func TestEnsureFileFallbackToEmbedded(t *testing.T) {
 		t.Fatalf("无法加载回退释放的 GeoIP 数据库: %v", err)
 	}
 	defer reader.Close()
+}
+
+func TestEnsureFileFallbackToEmbeddedAsset(t *testing.T) {
+	tempDir := t.TempDir()
+	targetPath := filepath.Join(tempDir, "rules", "cdn_keywords.txt")
+
+	d := NewDownloader()
+	d.retries = 1
+	d.retryDelay = 0
+	d.timeout = 500 * time.Millisecond
+
+	file := DataFile{
+		Name:          "cdn_keywords.txt",
+		URL:           "http://127.0.0.1:0/unreachable/cdn_keywords.txt",
+		LocalPath:     targetPath,
+		EmbeddedAsset: "cdn_keywords.txt",
+	}
+
+	if err := d.ensureFile(file); err != nil {
+		t.Fatalf("ensureFile 期望回退内置资源成功，但返回错误: %v", err)
+	}
+
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("回退写入的本地文件不存在: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatalf("回退写入的本地文件内容为空")
+	}
+
+	want, err := assetsFS.ReadFile("assets/cdn_keywords.txt")
+	if err != nil {
+		t.Fatalf("读取内置 cdn_keywords.txt 失败: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("回退写入内容与内置资源不一致: got %d 字节, want %d 字节", len(got), len(want))
+	}
+
+	if _, err := os.Stat(targetPath + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("回退写入后残留临时文件 %s.tmp", targetPath)
+	}
+}
+
+func TestOpenRuleReaderFallbackToEmbeddedGFWList(t *testing.T) {
+	reader, err := OpenRuleReader(filepath.Join(t.TempDir(), "missing", "gfwlist.conf"), "gfwlist.conf")
+	if err != nil {
+		t.Fatalf("OpenRuleReader 回退内置 gfwlist.conf 失败: %v", err)
+	}
+	defer reader.Close()
+
+	content, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("读取内置 gfwlist.conf 失败: %v", err)
+	}
+	if len(content) == 0 {
+		t.Fatalf("内置 gfwlist.conf 内容为空")
+	}
+	if !strings.Contains(string(content), "payload:") {
+		t.Errorf("内置 gfwlist.conf 缺少 payload 段")
+	}
 }
