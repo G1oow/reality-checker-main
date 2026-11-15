@@ -159,8 +159,8 @@ func TestSettingsFilterConfigOverlay(t *testing.T) {
 	if got.RequireNoCN {
 		t.Fatalf("不排除国内站点时 RequireNoCN 应为 false")
 	}
-	if !got.IPv4Only || got.IPv6Only {
-		t.Fatalf("仅 IPv4 选择应映射为 IPv4Only，实际 %v/%v", got.IPv4Only, got.IPv6Only)
+	if got.IPv4Only || got.IPv6Only {
+		t.Fatalf("发现阶段恒用 IPv4 网段，不应再设置 IPv4Only/IPv6Only，实际 %v/%v", got.IPv4Only, got.IPv6Only)
 	}
 	if got.ScanThreads != 300 || got.ScanTimeout != 7 {
 		t.Fatalf("并发/超时未透传：%d/%d", got.ScanThreads, got.ScanTimeout)
@@ -209,5 +209,57 @@ func TestSettingsValidate(t *testing.T) {
 	settings.Normalize()
 	if reason := settings.Validate(); reason != "" {
 		t.Fatalf("补齐国家代码后应可扫描，实际 %q", reason)
+	}
+}
+
+func TestSettingsDiscoveryAndDialFamily(t *testing.T) {
+	settings := DefaultSettings(baseFilter())
+	if got := settings.DialFamily(); got != "" {
+		t.Fatalf("双栈校验应不限定协议族，实际 %q", got)
+	}
+	if settings.DiscoveryKind() != DiscoveryEntryASN {
+		t.Fatalf("默认应为入口 ASN 发现，实际 %q", settings.DiscoveryKind())
+	}
+	if settings.CountryRowActive() {
+		t.Fatalf("入口模式且不限定 IPv6 校验时国家代码行不参与扫描")
+	}
+
+	settings.Family = FamilyV4
+	if got := settings.DialFamily(); got != "ipv4" {
+		t.Fatalf("仅 IPv4 校验应固定 tcp4，实际 %q", got)
+	}
+
+	settings.Family = FamilyV6
+	if got := settings.DialFamily(); got != "ipv6" {
+		t.Fatalf("仅 IPv6 校验应固定 tcp6，实际 %q", got)
+	}
+	if !settings.VerifyByIPv6Only() {
+		t.Fatalf("仅 IPv6 选择应被识别为仅 IPv6 校验")
+	}
+	if settings.DiscoveryKind() != DiscoveryVPSCountryASN {
+		t.Fatalf("仅 IPv6 校验应固定按 VPS 所在国家 ASN 发现，实际 %q", settings.DiscoveryKind())
+	}
+	if !settings.CountryRowActive() {
+		t.Fatalf("仅 IPv6 校验时国家代码行参与扫描")
+	}
+	if got := settings.DiscoveryCountry("de"); got != "DE" {
+		t.Fatalf("应使用出口探测推断的 VPS 所在国家，实际 %q", got)
+	}
+	settings.Country = "jp"
+	if got := settings.DiscoveryCountry("de"); got != "JP" {
+		t.Fatalf("手填国家应覆盖自动判定，实际 %q", got)
+	}
+
+	settings.Family = FamilyBoth
+	settings.Mode = ModeCountry
+	settings.Country = "de"
+	if settings.DiscoveryKind() != DiscoveryCountryASN {
+		t.Fatalf("国家模式应使用国家 ASN 发现，实际 %q", settings.DiscoveryKind())
+	}
+	if got := settings.DiscoveryCountry("jp"); got != "DE" {
+		t.Fatalf("国家模式应使用手填国家，实际 %q", got)
+	}
+	if got := settings.Validate(); got != "" {
+		t.Fatalf("国家模式补齐国家代码后应可扫描，实际 %q", got)
 	}
 }

@@ -88,7 +88,7 @@ func TestViewModelRendersCoreSections(t *testing.T) {
 		"R-C-M 面板",
 		"扫描参数",
 		"扫描模式",
-		"入口协议族",
+		"校验协议族",
 		"目标数量 limit",
 		"扫描并发",
 		"单 IP 超时",
@@ -361,5 +361,69 @@ func TestModelSettingsPersistPath(t *testing.T) {
 	}
 	if !strings.Contains(model.SettingsNote(), settingsPath) {
 		t.Fatalf("应提示设置已保存到 %s，实际 %q", settingsPath, model.SettingsNote())
+	}
+}
+
+func TestModelIPv6VerificationUsesVPSCountry(t *testing.T) {
+	entries := []EntryOption{
+		entryOption(network.FamilyIPv4, "198.51.100.7", 64500, []string{"198.51.100.0/24"}, true, ""),
+		entryOption(network.FamilyIPv6, "2001:db8::7", 64501, []string{"203.0.113.0/24"}, true, ""),
+	}
+	entries[0].CountryCode = "US"
+	entries[1].CountryCode = "DE"
+
+	deps := Deps{
+		BaseCfg: types.Config{Filter: baseFilter()},
+		Engine:  &core.Engine{},
+		Scanner: &scanner.Scanner{},
+		Country: &fakeCountryClient{resources: &asn.CountryResources{ASNs: []int{}}},
+		Probe: func(context.Context, *geoip2.Reader, asn.ASNResolver) []EntryOption {
+			return entries
+		},
+	}
+	model := NewModel(context.Background(), deps, DefaultSettings(baseFilter()), filepath.Join(t.TempDir(), "panel.json"))
+	model.width, model.height = 120, 44
+	model.SetEntries(entries)
+	model.settings.Family = FamilyV6
+
+	if !strings.Contains(viewText(model), "VPS 所在国家 DE") {
+		t.Fatalf("仅 IPv6 校验时应展示自动判定的 VPS 所在国家\n%s", viewText(model))
+	}
+
+	model = press(t, model, "s")
+	countryPlan, ok := model.plan.(*CountryPlan)
+	if !ok {
+		t.Fatalf("仅 IPv6 校验应生成国家 ASN 计划，实际 %T", model.plan)
+	}
+	if countryPlan.country != "DE" || countryPlan.queueName != QueueVPSCountryASN {
+		t.Fatalf("发现源应为 VPS 所在国家 DE，实际 %q / %q", countryPlan.country, countryPlan.queueName)
+	}
+}
+
+func TestModelIPv6VerificationBlockedWithoutEgress(t *testing.T) {
+	entries := []EntryOption{
+		entryOption(network.FamilyIPv4, "198.51.100.7", 64500, []string{"198.51.100.0/24"}, true, ""),
+		entryOption(network.FamilyIPv6, "", 0, nil, false, "无 IPv6 出口"),
+	}
+	deps := Deps{
+		BaseCfg: types.Config{Filter: baseFilter()},
+		Engine:  &core.Engine{},
+		Scanner: &scanner.Scanner{},
+		Country: &fakeCountryClient{resources: &asn.CountryResources{ASNs: []int{}}},
+		Probe: func(context.Context, *geoip2.Reader, asn.ASNResolver) []EntryOption {
+			return entries
+		},
+	}
+	model := NewModel(context.Background(), deps, DefaultSettings(baseFilter()), filepath.Join(t.TempDir(), "panel.json"))
+	model.width, model.height = 120, 44
+	model.SetEntries(entries)
+	model.settings.Family = FamilyV6
+
+	model = press(t, model, "s")
+	if model.runner != nil {
+		t.Fatalf("本机无 IPv6 出口时不应启动仅 IPv6 校验")
+	}
+	if !strings.Contains(viewText(model), "IPv6 出口不可用") {
+		t.Fatalf("应提示 IPv6 出口不可用\n%s", viewText(model))
 	}
 }

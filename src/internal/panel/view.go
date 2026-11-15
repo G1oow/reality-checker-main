@@ -67,7 +67,7 @@ func (m *Model) View() string {
 // renderHeader 渲染标题行
 func (m *Model) renderHeader() string {
 	title := titleStyle.Render("R-C-M 面板")
-	tag := dimStyle.Render("按国家/地区 ASN 或 VPS 入口 IP ASN 扫描 REALITY 目标")
+	tag := dimStyle.Render("发现用 IPv4 网段 · 域名按协议族校验（仅 IPv6 需 AAAA）")
 	keys := dimStyle.Render("s 开始扫描 · x/esc 停止 · r 重探入口 · ↑↓ 选择 · ←→ 改值 · tab 切换焦点 · q 退出")
 	return fmt.Sprintf("%s  %s\n%s", title, tag, keys)
 }
@@ -93,7 +93,7 @@ func (m *Model) renderSettings() string {
 		if i == rowCountry && m.editing {
 			value = "输入中：" + m.editBuf + "_"
 		}
-		if row.Label == "国家/地区代码" && m.settings.Mode != ModeCountry {
+		if i == rowCountry && !m.settings.CountryRowActive() {
 			value = dimStyle.Render(value)
 		}
 		builder.WriteString(fmt.Sprintf("%s%s %s\n", marker, pad(row.Label, labelWidth), value))
@@ -118,6 +118,10 @@ func (m *Model) renderStatus() string {
 	builder.WriteString(fmt.Sprintf("  阶段     %s（%s）\n", status.Phase.Label(), progressText))
 	builder.WriteString(fmt.Sprintf("  已扫描   %s 个 IP · 速率 %s\n", humanInt(status.ScannedIPs), humanRate(status.Rate)))
 	builder.WriteString(fmt.Sprintf("  命中     %d / %d 个目标 · 候选域名 %d\n", status.Hits, m.settings.Limit, status.Candidates))
+	if status.Rejected > 0 {
+		builder.WriteString(fmt.Sprintf("  剔除候选 %d 个 · 最近 %s（%s）\n",
+			status.Rejected, emptyAs(status.LastRejectDomain, "—"), emptyAs(status.LastReject, "—")))
+	}
 	builder.WriteString(fmt.Sprintf("  当前网段 %s\n", emptyAs(status.CurrentCIDR, "—")))
 	builder.WriteString(fmt.Sprintf("  当前 IP  %s\n", emptyAs(status.CurrentIP, "—")))
 	if status.BatchTotal > 0 {
@@ -147,7 +151,7 @@ func (m *Model) renderStatus() string {
 
 // renderEntries 渲染本机出口探测结果
 func (m *Model) renderEntries() string {
-	if m.settings.Mode != ModeEntry {
+	if m.settings.DiscoveryKind() == DiscoveryCountryASN {
 		return "  " + dimStyle.Render("当前为按国家/地区 ASN 模式，不使用本机出口") + "\n"
 	}
 	if m.probing {
@@ -165,6 +169,13 @@ func (m *Model) renderEntries() string {
 			line = "  " + warnStyle.Render("!") + " " + option.Summary()
 		}
 		builder.WriteString(line + "\n")
+	}
+	if m.settings.DiscoveryKind() == DiscoveryVPSCountryASN {
+		country := m.settings.DiscoveryCountry(m.autoCountry())
+		if country == "" {
+			country = "未能判定（按 r 重新探测或回车手动填写）"
+		}
+		builder.WriteString("  " + dimStyle.Render("IPv6 校验发现源：VPS 所在国家 "+country) + "\n")
 	}
 	return builder.String()
 }

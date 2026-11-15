@@ -33,11 +33,11 @@ func RunHeadless(
 	}
 	settings.Normalize()
 
-	logger.Linef(logger.IconStep, "扫描模式", "%s", modeLabel(settings.Mode))
-	if settings.Mode == ModeCountry {
-		logger.Linef(logger.IconStep, "国家/地区", "%s", settings.Country)
+	logger.Linef(logger.IconStep, "发现来源", "%s", discoveryLabel(settings))
+	if country := settings.DiscoveryCountry(""); country != "" {
+		logger.Linef(logger.IconStep, "国家/地区", "%s", country)
 	}
-	logger.Linef(logger.IconStep, "目标数量", "%d（并发 %d，超时 %ds，协议族 %s）",
+	logger.Linef(logger.IconStep, "目标数量", "%d（并发 %d，超时 %ds，校验协议族 %s，发现用 IPv4 网段）",
 		settings.Limit, settings.Threads, settings.TimeoutSec, familyLabel(settings.Family))
 	logger.Linef(logger.IconStep, "过滤策略", "星级 ≥ %s，握手 ≤ %s，证书 ≥ %s，CDN %s，热门大站 %s，国内站点 %s",
 		optionalCount(settings.Filter.MinStars, " 星"),
@@ -119,6 +119,11 @@ func reportFinal(okIcon, errIcon string, status Status, rows []Row) {
 		logger.Linef(okIcon, "扫描完成", "%s（命中 %d 个目标，已扫描 %s 个 IP，用时 %s）",
 			status.Message, len(rows), humanInt(status.ScannedIPs), humanDuration(status.Elapsed))
 	}
+
+	if status.Rejected > 0 {
+		logger.Linef(logger.IconDetail, "剔除候选", "共 %d 个（最近：%s — %s）",
+			status.Rejected, emptyAs(status.LastRejectDomain, "—"), emptyAs(status.LastReject, "—"))
+	}
 	if len(rows) == 0 {
 		logger.Linef(logger.IconWarn, "结果为空", "本次未命中符合条件的目标，可放宽星级/握手延迟限制后重试")
 		return
@@ -137,10 +142,13 @@ func reportFinal(okIcon, errIcon string, status Status, rows []Row) {
 	}
 }
 
-// modeLabel 返回扫描模式显示名
-func modeLabel(mode Mode) string {
-	if mode == ModeCountry {
+// discoveryLabel 返回发现来源的显示名
+func discoveryLabel(settings Settings) string {
+	switch settings.DiscoveryKind() {
+	case DiscoveryCountryASN:
 		return "按国家/地区 ASN"
+	case DiscoveryVPSCountryASN:
+		return "按 VPS 所在国家 ASN（仅 IPv6 校验·发现用 IPv4 网段）"
 	}
 	return "按 VPS 入口 IP ASN"
 }

@@ -68,12 +68,18 @@ type Row struct {
 
 // Status 扫描实时状态快照
 type Status struct {
-	Phase       Phase
-	Message     string
-	Reason      string
-	ScannedIPs  int64
-	Hits        int
-	Candidates  int
+	Phase      Phase
+	Message    string
+	Reason     string
+	ScannedIPs int64
+	Hits       int
+	Candidates int
+	// Rejected 已被剔除的候选域名数量
+	Rejected int
+	// LastRejectDomain 最近被剔除的候选域名
+	LastRejectDomain string
+	// LastReject 最近一次剔除原因
+	LastReject  string
 	Rate        float64
 	CurrentCIDR string
 	CurrentIP   string
@@ -106,11 +112,14 @@ func (s Status) Progress() float64 {
 }
 
 // RunnerConfig 扫描运行器依赖
+// RunnerConfig 扫描运行器依赖
 type RunnerConfig struct {
 	Engine  *core.Engine
 	Scanner *scanner.Scanner
 	Filter  types.FilterConfig
 	Limit   int
+	// Family 域名校验的目标连接协议族（"" 不限定 / "ipv4" / "ipv6"），扫描开始前应用到引擎
+	Family string
 }
 
 // Runner 在内存中执行扫描并汇总结果（不读写资产数据库）
@@ -169,6 +178,9 @@ func (r *Runner) Start(parent context.Context, plan Plan) error {
 	r.done = make(chan struct{})
 	r.status = Status{Phase: PhasePrepare, Message: "正在准备扫描计划"}
 	r.mu.Unlock()
+
+	// 协议族只作用于域名校验：发现阶段恒用 IPv4 网段，校验按所选协议族拨号
+	r.cfg.Engine.SetDialFamily(r.cfg.Family)
 
 	go r.run(ctx, plan)
 	return nil
@@ -337,6 +349,13 @@ func (r *Runner) scanBatch(ctx context.Context, batch *Batch, maxTargets int) {
 				s.Message = fmt.Sprintf("已达目标数量上限 %d，正在收尾", maxTargets)
 			})
 		},
+		OnCandidateRejected: func(_ string, domain string, reason string) {
+			r.setStatus(func(s *Status) {
+				s.Rejected++
+				s.LastRejectDomain = domain
+				s.LastReject = shortReason(reason)
+			})
+		},
 		OnLog: func(msg string) {
 			r.setStatus(func(s *Status) { s.Message = msg })
 		},
@@ -447,4 +466,16 @@ func (r *Runner) finish(phase Phase, message, reason string) {
 		s.Message = message
 		s.Reason = reason
 	})
+}
+
+// shortReason 压缩剔除原因，避免 TUI 单行过长
+func shortReason(reason string) string {
+	msg := strings.TrimSpace(strings.ReplaceAll(reason, "\n", " "))
+	if msg == "" {
+		return "未通过适用性判定"
+	}
+	if len(msg) > 70 {
+		msg = msg[:70] + "…"
+	}
+	return msg
 }

@@ -63,22 +63,9 @@ type CountryClient interface {
 	PrefixFetcher
 }
 
-// filterByFamily 按协议族筛选 CIDR
-func filterByFamily(cidrs []string, family FamilyChoice) []string {
-	switch family {
-	case FamilyV4:
-		return asn.FilterIPVersion(cidrs, true, false)
-	case FamilyV6:
-		return asn.FilterIPVersion(cidrs, false, true)
-	default:
-		return cidrs
-	}
-}
-
 // 可逐 IP 枚举的网段规模上限（按主机位计算），超过则视为无法扫描的聚合大段
 const (
 	maxIPv4HostBits = 16 // /16 及更小网段可枚举
-	maxIPv6HostBits = 16 // /112 及更小网段可枚举
 )
 
 // selectedEntry 已通过协议族与可枚举规模校验的入口
@@ -87,28 +74,35 @@ type selectedEntry struct {
 	cidrs  []string
 }
 
-// scanablePrefixes 按协议族与可枚举规模筛选网段，返回可扫描网段与被跳过的网段说明
-func scanablePrefixes(cidrs []string, family FamilyChoice) (scanable []string, skipped []string) {
-	for _, raw := range filterByFamily(cidrs, family) {
+// scanablePrefixes 过滤出发现阶段可用的网段。
+// 发现恒走 IPv4 地址空间（IPv6 聚合段动辄 2^87 个地址，无法逐 IP 枚举），
+// 因此 IPv6 网段在这里被显式跳过并说明原因，只参与域名校验。
+func scanablePrefixes(cidrs []string) (scanable []string, skipped []string) {
+	for _, raw := range cidrs {
 		value := strings.TrimSpace(raw)
 		if value == "" {
 			continue
 		}
 		prefix, err := netip.ParsePrefix(value)
 		if err != nil {
-			if _, addrErr := netip.ParseAddr(value); addrErr == nil {
-				scanable = append(scanable, value)
+			addr, addrErr := netip.ParseAddr(value)
+			if addrErr != nil {
+				skipped = append(skipped, fmt.Sprintf("%s（格式无法解析）", value))
 				continue
 			}
-			skipped = append(skipped, fmt.Sprintf("%s（格式无法解析）", value))
+			if !addr.Is4() {
+				skipped = append(skipped, fmt.Sprintf("%s（IPv6 地址不参与发现，只做域名校验）", addr.String()))
+				continue
+			}
+			scanable = append(scanable, addr.String())
 			continue
 		}
-		limit := maxIPv4HostBits
 		if !prefix.Addr().Is4() {
-			limit = maxIPv6HostBits
+			skipped = append(skipped, fmt.Sprintf("%s（IPv6 网段不参与发现，只做域名校验）", prefix.Masked().String()))
+			continue
 		}
 		hostBits := prefix.Addr().BitLen() - prefix.Bits()
-		if hostBits > limit {
+		if hostBits > maxIPv4HostBits {
 			skipped = append(skipped, fmt.Sprintf("%s（聚合段含 2^%d 个地址，无法逐 IP 枚举）", prefix.Masked().String(), hostBits))
 			continue
 		}
@@ -162,6 +156,8 @@ func (p *EntryPlan) Prepare(_ context.Context) error {
 
 	unavailable := make([]string, 0, 2)
 	oversize := make([]string, 0, 4)
+	duplicated := make([]string, 0, 2)
+	seenASN := make(map[int]bool, len(p.options))
 	p.selected = p.selected[:0]
 	for _, option := range p.options {
 		if !wanted[option.Family] {
@@ -175,15 +171,21 @@ func (p *EntryPlan) Prepare(_ context.Context) error {
 			unavailable = append(unavailable, fmt.Sprintf("%s（%s）", option.Family, reason))
 			continue
 		}
-		cidrs, skipped := scanablePrefixes(option.Prefixes, p.family)
+		if seenASN[option.ASN] {
+			// 同一 ASN 的 v4/v6 入口公告网段相同，去重避免同一批网段被扫两遍
+			duplicated = append(duplicated, fmt.Sprintf("%s（%s 已由其它入口覆盖）", option.Family, option.ASNLabel()))
+			continue
+		}
+		cidrs, skipped := scanablePrefixes(option.Prefixes)
 		if len(cidrs) == 0 {
-			reason := "该 ASN 没有可逐 IP 枚举的网段"
+			reason := "该 ASN 没有可逐 IP 枚举的 IPv4 网段（IPv6 网段只做域名校验）"
 			if len(skipped) > 0 {
 				reason = joinStrings(summarize(skipped, 2), "、")
 			}
 			unavailable = append(unavailable, fmt.Sprintf("%s %s（%s）", option.Family, option.ASNLabel(), reason))
 			continue
 		}
+		seenASN[option.ASN] = true
 		oversize = append(oversize, skipped...)
 		p.selected = append(p.selected, selectedEntry{option: option, cidrs: cidrs})
 	}
@@ -196,12 +198,15 @@ func (p *EntryPlan) Prepare(_ context.Context) error {
 	}
 
 	p.stats.BatchesTotal = len(p.selected)
-	notes := make([]string, 0, 2)
+	notes := make([]string, 0, 3)
 	if len(unavailable) > 0 {
 		notes = append(notes, "已跳过不可用出口："+joinStrings(unavailable, "、"))
 	}
 	if len(oversize) > 0 {
 		notes = append(notes, "已跳过不可枚举网段："+joinStrings(summarize(oversize, 3), "、"))
+	}
+	if len(duplicated) > 0 {
+		notes = append(notes, "已跳过重复 ASN 入口："+joinStrings(duplicated, "、"))
 	}
 	p.stats.Note = joinStrings(notes, "；")
 	return nil
@@ -227,11 +232,19 @@ func (p *EntryPlan) Next(_ context.Context) (*Batch, error) {
 // Stats 返回计划统计
 func (p *EntryPlan) Stats() PlanStats { return p.stats }
 
-// CountryPlan 按国家/地区的 ASN 清单依次扫描
+// QueueCountryASN 与 QueueVPSCountryASN 区分两种国家 ASN 清单来源
+const (
+	// QueueCountryASN 按手填国家/地区扫描的队列名
+	QueueCountryASN = "国家 ASN 队列"
+	// QueueVPSCountryASN 按 VPS 所在国家扫描的队列名（仅 IPv6 校验时使用）
+	QueueVPSCountryASN = "VPS 所在国家 ASN 队列"
+)
+
+// CountryPlan 按国家/地区的 ASN 清单依次扫描（发现恒用各 ASN 的 IPv4 网段）
 type CountryPlan struct {
-	fetcher CountryClient
-	country string
-	family  FamilyChoice
+	fetcher   CountryClient
+	country   string
+	queueName string
 
 	resources *asn.CountryResources
 	cursor    int
@@ -239,13 +252,17 @@ type CountryPlan struct {
 	stats     PlanStats
 }
 
-// NewCountryPlan 创建按国家扫描的计划（ASN 清单在 Prepare 阶段在线拉取）
-func NewCountryPlan(fetcher CountryClient, country string, family FamilyChoice) *CountryPlan {
+// NewCountryPlan 创建按国家扫描的计划（ASN 清单在 Prepare 阶段在线拉取）。
+// queueName 取 QueueCountryASN 或 QueueVPSCountryASN，为空时使用前者。
+func NewCountryPlan(fetcher CountryClient, country string, queueName string) *CountryPlan {
+	if queueName == "" {
+		queueName = QueueCountryASN
+	}
 	return &CountryPlan{
-		fetcher: fetcher,
-		country: country,
-		family:  family,
-		stats:   PlanStats{QueueName: "国家 ASN 队列", Country: country},
+		fetcher:   fetcher,
+		country:   country,
+		queueName: queueName,
+		stats:     PlanStats{QueueName: queueName, Country: country},
 	}
 }
 
@@ -253,11 +270,16 @@ func NewCountryPlan(fetcher CountryClient, country string, family FamilyChoice) 
 func (p *CountryPlan) Mode() Mode { return ModeCountry }
 
 // Summary 返回计划描述
+// Summary 返回计划描述
 func (p *CountryPlan) Summary() string {
-	if p.resources == nil {
-		return fmt.Sprintf("按国家/地区 ASN 扫描（%s）", p.country)
+	title := "按国家/地区 ASN 扫描"
+	if p.queueName == QueueVPSCountryASN {
+		title = "按 VPS 所在国家 ASN 扫描"
 	}
-	return fmt.Sprintf("按国家/地区 ASN 扫描（%s，%d 个 ASN）", p.country, len(p.resources.ASNs))
+	if p.resources == nil {
+		return fmt.Sprintf("%s（%s）", title, p.country)
+	}
+	return fmt.Sprintf("%s（%s，%d 个 ASN）", title, p.country, len(p.resources.ASNs))
 }
 
 // Prepare 在线拉取该国 ASN 清单
@@ -308,12 +330,12 @@ func (p *CountryPlan) Next(ctx context.Context) (*Batch, error) {
 			p.recordSkip(fmt.Sprintf("%s（%s）", resource, shortError(err)))
 			continue
 		}
-		cidrs, skipped := scanablePrefixes(prefixes, p.family)
+		cidrs, skipped := scanablePrefixes(prefixes)
 		for _, reason := range skipped {
 			p.recordSkip(reason)
 		}
 		if len(cidrs) == 0 {
-			p.recordSkip(fmt.Sprintf("%s（无可逐 IP 枚举的网段）", resource))
+			p.recordSkip(fmt.Sprintf("%s（无可逐 IP 枚举的 IPv4 网段）", resource))
 			continue
 		}
 		return &Batch{

@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -232,5 +233,71 @@ func TestDisplayHelpers(t *testing.T) {
 	}
 	if got := StripANSI("\x1b[1m面板\x1b[0m"); got != "面板" {
 		t.Fatalf("ANSI 清理失败: %q", got)
+	}
+}
+
+func TestRunnerRecordsRejectReasons(t *testing.T) {
+	runner := newTestRunner(5)
+	runner.setStatus(func(s *Status) {
+		s.Rejected++
+		s.LastRejectDomain = "no-aaaa.example"
+		s.LastReject = shortReason("IP解析失败: 域名无 AAAA 记录（已限定仅 IPv6 校验）")
+	})
+	status := runner.Status()
+	if status.Rejected != 1 || status.LastRejectDomain != "no-aaaa.example" {
+		t.Fatalf("剔除信息未记录: %+v", status)
+	}
+	if !strings.Contains(status.LastReject, "AAAA") {
+		t.Fatalf("剔除原因应保留关键信息: %q", status.LastReject)
+	}
+	if got := shortReason("a\nb"); got != "a b" {
+		t.Fatalf("剔除原因应压平换行，实际 %q", got)
+	}
+	if got := shortReason("   "); got != "未通过适用性判定" {
+		t.Fatalf("空原因应有兜底文案，实际 %q", got)
+	}
+	if got := shortReason(strings.Repeat("x", 200)); len(got) > 80 {
+		t.Fatalf("过长的剔除原因应被截断，实际 %d 字符", len(got))
+	}
+}
+
+func TestRunnerAppliesDialFamilyToEngine(t *testing.T) {
+	engine := core.NewEngine(&types.Config{})
+	if err := engine.Start(); err != nil {
+		t.Fatalf("启动引擎失败: %v", err)
+	}
+	defer engine.Stop()
+
+	runner := NewRunner(RunnerConfig{
+		Engine:  engine,
+		Scanner: &scanner.Scanner{},
+		Filter:  baseFilter(),
+		Limit:   1,
+		Family:  "ipv6",
+	})
+	if err := runner.Start(context.Background(), &fakePlan{}); err != nil {
+		t.Fatalf("启动扫描失败: %v", err)
+	}
+	if got := engine.DialFamily(); got != "ipv6" {
+		t.Fatalf("扫描开始前应把引擎固定到仅 IPv6 校验，实际 %q", got)
+	}
+	if !runner.Wait(2 * time.Second) {
+		t.Fatalf("扫描未在预期时间内结束")
+	}
+
+	both := NewRunner(RunnerConfig{
+		Engine:  engine,
+		Scanner: &scanner.Scanner{},
+		Filter:  baseFilter(),
+		Limit:   1,
+	})
+	if err := both.Start(context.Background(), &fakePlan{}); err != nil {
+		t.Fatalf("启动扫描失败: %v", err)
+	}
+	if got := engine.DialFamily(); got != "" {
+		t.Fatalf("双栈校验应清除固定的协议族，实际 %q", got)
+	}
+	if !both.Wait(2 * time.Second) {
+		t.Fatalf("扫描未在预期时间内结束")
 	}
 }

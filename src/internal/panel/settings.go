@@ -22,13 +22,25 @@ const (
 	ModeCountry Mode = "country"
 )
 
-// FamilyChoice 入口协议族选择
+// FamilyChoice 域名校验协议族选择（发现阶段恒用 IPv4 网段，不受其影响）
 type FamilyChoice string
 
 const (
 	FamilyV4   FamilyChoice = "v4"
 	FamilyV6   FamilyChoice = "v6"
 	FamilyBoth FamilyChoice = "both"
+)
+
+// DiscoveryKind 发现阶段的来源类型
+type DiscoveryKind string
+
+const (
+	// DiscoveryEntryASN 按 VPS 入口 IP 的 ASN 发现
+	DiscoveryEntryASN DiscoveryKind = "entry"
+	// DiscoveryCountryASN 按指定国家/地区的 ASN 清单发现
+	DiscoveryCountryASN DiscoveryKind = "country"
+	// DiscoveryVPSCountryASN 按 VPS 所在国家的 ASN 清单发现（仅 IPv6 校验时的固定来源）
+	DiscoveryVPSCountryASN DiscoveryKind = "vps_country"
 )
 
 // 目标数量与参数边界
@@ -153,6 +165,54 @@ func (s Settings) Families() []network.Family {
 	}
 }
 
+// DiscoveryKind 返回发现阶段实际使用的来源。
+// 仅 IPv6 校验时固定按 VPS 所在国家的 ASN 清单发现：IPv6 聚合网段无法逐 IP 枚举，
+// 因此 IPv6 只作用于域名校验（必须有 AAAA 且用 tcp6 握手），不做地址空间扫描。
+func (s Settings) DiscoveryKind() DiscoveryKind {
+	if s.Family == FamilyV6 {
+		return DiscoveryVPSCountryASN
+	}
+	if s.Mode == ModeCountry {
+		return DiscoveryCountryASN
+	}
+	return DiscoveryEntryASN
+}
+
+// DiscoveryCountry 返回发现阶段使用的国家代码；autoCountry 为出口探测推断的 VPS 所在国家。
+// 仅 IPv6 校验时优先使用面板里手填的国家（覆盖自动判定）。
+func (s Settings) DiscoveryCountry(autoCountry string) string {
+	switch s.DiscoveryKind() {
+	case DiscoveryCountryASN:
+		return asn.NormalizeCountryCode(s.Country)
+	case DiscoveryVPSCountryASN:
+		if country := asn.NormalizeCountryCode(s.Country); country != "" {
+			return country
+		}
+		return asn.NormalizeCountryCode(autoCountry)
+	}
+	return ""
+}
+
+// DialFamily 返回域名校验使用的目标连接协议族（"" 不限定 / "ipv4" / "ipv6"）
+func (s Settings) DialFamily() string {
+	switch s.Family {
+	case FamilyV4:
+		return "ipv4"
+	case FamilyV6:
+		return "ipv6"
+	}
+	return ""
+}
+
+// VerifyByIPv6Only 返回是否限定仅用 IPv6 校验域名
+func (s Settings) VerifyByIPv6Only() bool { return s.Family == FamilyV6 }
+
+// CountryRowActive 返回国家/地区代码是否参与当前扫描（国家模式或仅 IPv6 校验发现源）
+func (s Settings) CountryRowActive() bool {
+	kind := s.DiscoveryKind()
+	return kind == DiscoveryCountryASN || kind == DiscoveryVPSCountryASN
+}
+
 // FilterConfig 把面板参数叠加到全局过滤配置上（保留配置里的排除规则与后缀策略）
 func (s Settings) FilterConfig(base types.FilterConfig) types.FilterConfig {
 	fc := base
@@ -172,23 +232,16 @@ func (s Settings) FilterConfig(base types.FilterConfig) types.FilterConfig {
 	fc.NoResume = true
 	fc.Verbose = false
 
-	switch s.Family {
-	case FamilyV4:
-		fc.IPv4Only, fc.IPv6Only = true, false
-	case FamilyV6:
-		fc.IPv4Only, fc.IPv6Only = false, true
-	default:
-		fc.IPv4Only, fc.IPv6Only = false, false
-	}
+	// 发现阶段恒用 IPv4 网段，协议族只决定域名校验的拨号族（见 DialFamily），
+	// 因此不再设置 IPv4Only/IPv6Only，避免误伤 IPv4 发现结果。
+	fc.IPv4Only, fc.IPv6Only = false, false
 	return fc
 }
 
 // Validate 返回阻塞启动扫描的原因（空表示可以开始）
 func (s Settings) Validate() string {
-	if s.Mode == ModeCountry {
-		if s.Country == "" {
-			return "请先填写国家/地区代码（两位 ISO 代码，如 DE、JP）"
-		}
+	if s.DiscoveryKind() == DiscoveryCountryASN && s.Country == "" {
+		return "请先填写国家/地区代码（两位 ISO 代码，如 DE、JP）"
 	}
 	if s.Limit < MinLimit || s.Limit > MaxLimit {
 		return fmt.Sprintf("目标数量必须在 %d~%d 之间", MinLimit, MaxLimit)

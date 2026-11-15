@@ -304,8 +304,8 @@ func (m *Model) moveCursor(delta int) {
 	if m.cursor >= rowCount {
 		m.cursor = rowCount - 1
 	}
-	if m.cursor == rowCountry && m.settings.Mode != ModeCountry {
-		// 入口模式下国家代码不参与，跳过到下一行
+	if m.cursor == rowCountry && !m.settings.CountryRowActive() {
+		// 既不是国家模式、也不做 IPv6 校验时国家代码不参与，跳过到下一行
 		if delta > 0 {
 			m.cursor = rowLimit
 		} else {
@@ -319,6 +319,10 @@ func (m *Model) adjust(delta int) (tea.Model, tea.Cmd) {
 	m.settings.Normalize()
 	switch m.cursor {
 	case rowMode:
+		if m.settings.DiscoveryKind() == DiscoveryVPSCountryASN {
+			m.setStatus("warn", "仅 IPv6 校验时固定按 VPS 所在国家 ASN 发现；切回 IPv4 / 双栈后可切换模式")
+			return m, nil
+		}
 		if m.settings.Mode == ModeEntry {
 			m.settings.Mode = ModeCountry
 		} else {
@@ -327,7 +331,7 @@ func (m *Model) adjust(delta int) (tea.Model, tea.Cmd) {
 	case rowFamily:
 		m.settings.Family = stepFamily(m.settings.Family, delta)
 	case rowCountry:
-		if m.settings.Mode == ModeCountry {
+		if m.settings.CountryRowActive() {
 			m.editing = true
 			m.editBuf = m.settings.Country
 			return m, nil
@@ -354,6 +358,9 @@ func (m *Model) adjust(delta int) (tea.Model, tea.Cmd) {
 		m.settings.Filter.ExcludeDefaultPage = !m.settings.Filter.ExcludeDefaultPage
 	}
 	m.settings.Normalize()
+	if m.cursor == rowFamily && m.settings.VerifyByIPv6Only() {
+		m.setStatus("info", "仅 IPv6 校验：发现自动改用 VPS 所在国家 ASN 的 IPv4 网段，域名必须有 AAAA 记录")
+	}
 	m.persist()
 	return m, nil
 }
@@ -371,25 +378,10 @@ func (m *Model) startScan() (tea.Model, tea.Cmd) {
 		m.setStatus("err", reason)
 		return m, nil
 	}
-	if m.deps.Engine == nil || m.deps.Scanner == nil {
-		m.setStatus("err", "扫描引擎未初始化")
+	plan, reason := m.buildPlan()
+	if reason != "" {
+		m.setStatus("err", reason)
 		return m, nil
-	}
-
-	var plan Plan
-	switch m.settings.Mode {
-	case ModeCountry:
-		if m.deps.Country == nil {
-			m.setStatus("err", "国家 ASN 查询客户端未初始化")
-			return m, nil
-		}
-		plan = NewCountryPlan(m.deps.Country, m.settings.Country, m.settings.Family)
-	default:
-		if m.probing {
-			m.setStatus("warn", "正在探测入口 IP，请稍候再开始")
-			return m, nil
-		}
-		plan = NewEntryPlan(m.entries, m.settings.Family)
 	}
 
 	m.plan = plan
@@ -400,6 +392,7 @@ func (m *Model) startScan() (tea.Model, tea.Cmd) {
 		Scanner: m.deps.Scanner,
 		Filter:  m.settings.FilterConfig(m.deps.BaseCfg.Filter),
 		Limit:   m.settings.Limit,
+		Family:  m.settings.DialFamily(),
 	})
 	if err := m.runner.Start(m.ctx, plan); err != nil {
 		m.setStatus("err", err.Error())
@@ -408,6 +401,39 @@ func (m *Model) startScan() (tea.Model, tea.Cmd) {
 	m.focus = FocusResults
 	m.setStatus("info", fmt.Sprintf("%s，目标数量 %d，按 x 可停止", plan.Summary(), m.settings.Limit))
 	return m, nil
+}
+
+// buildPlan 依据当前参数生成扫描计划（发现源由 DiscoveryKind 决定，协议族只作用于域名校验）
+func (m *Model) buildPlan() (Plan, string) {
+	if m.deps.Engine == nil || m.deps.Scanner == nil {
+		return nil, "扫描引擎未初始化"
+	}
+	if reason := StartBlocker(m.settings, m.entries, m.probing); reason != "" {
+		return nil, reason
+	}
+	switch m.settings.DiscoveryKind() {
+	case DiscoveryCountryASN:
+		if m.deps.Country == nil {
+			return nil, "国家 ASN 查询客户端未初始化"
+		}
+		return NewCountryPlan(m.deps.Country, m.settings.Country, QueueCountryASN), ""
+	case DiscoveryVPSCountryASN:
+		if m.deps.Country == nil {
+			return nil, "国家 ASN 查询客户端未初始化"
+		}
+		country := m.settings.DiscoveryCountry(m.autoCountry())
+		if country == "" {
+			return nil, "无法判定 VPS 所在国家（出口探测失败）：可按 r 重新探测，或回车手动填写国家/地区代码"
+		}
+		return NewCountryPlan(m.deps.Country, country, QueueVPSCountryASN), ""
+	default:
+		return NewEntryPlan(m.entries, m.settings.Family), ""
+	}
+}
+
+// autoCountry 返回出口探测推断的 VPS 所在国家（优先 IPv6 出口，回退 IPv4）
+func (m *Model) autoCountry() string {
+	return AutoDiscoveryCountry(m.entries)
 }
 
 // persist 保存面板参数到本地设置文件
@@ -485,20 +511,31 @@ type settingRow struct {
 // settingRows 返回按顺序排列的参数行（含当前取值）
 func (m *Model) settingRows() []settingRow {
 	mode := "按 VPS 入口 IP ASN"
-	if m.settings.Mode == ModeCountry {
+	switch m.settings.DiscoveryKind() {
+	case DiscoveryCountryASN:
 		mode = "按国家/地区 ASN"
+	case DiscoveryVPSCountryASN:
+		mode = "按 VPS 所在国家 ASN（IPv6 校验固定）"
 	}
+
 	country := m.settings.Country
 	if country == "" {
-		if m.settings.Mode == ModeCountry {
+		switch m.settings.DiscoveryKind() {
+		case DiscoveryCountryASN:
 			country = "未设置（回车输入）"
-		} else {
+		case DiscoveryVPSCountryASN:
+			if auto := m.autoCountry(); auto != "" {
+				country = "自动 " + auto + "（VPS 所在国家，回车覆盖）"
+			} else {
+				country = "自动判定中（按 r 重探或回车手填）"
+			}
+		default:
 			country = "仅国家模式使用"
 		}
 	}
 	rows := []settingRow{
 		{"扫描模式", mode},
-		{"入口协议族", familyLabel(m.settings.Family)},
+		{"校验协议族", familyLabel(m.settings.Family)},
 		{"国家/地区代码", country},
 		{"目标数量 limit", fmt.Sprintf("%d", m.settings.Limit)},
 		{"扫描并发", fmt.Sprintf("%d", m.settings.Threads)},

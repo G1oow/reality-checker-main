@@ -124,6 +124,59 @@ func describeASN(asnNumber int) (provider string, kind string) {
 	return name, "机房"
 }
 
+// AutoDiscoveryCountry 从入口探测结果推断 VPS 所在国家：优先 IPv6 出口，回退 IPv4 出口。
+func AutoDiscoveryCountry(options []EntryOption) string {
+	fallback := ""
+	for _, option := range options {
+		if !option.Available {
+			continue
+		}
+		country := asn.NormalizeCountryCode(option.CountryCode)
+		if country == "" {
+			continue
+		}
+		if option.Family == network.FamilyIPv6 {
+			return country
+		}
+		if fallback == "" {
+			fallback = country
+		}
+	}
+	return fallback
+}
+
+// HasUsableIPv6Egress 返回入口探测结果里是否存在可用的 IPv6 出口
+func HasUsableIPv6Egress(options []EntryOption) bool {
+	for _, option := range options {
+		if option.Family == network.FamilyIPv6 && option.Available {
+			return true
+		}
+	}
+	return false
+}
+
+// StartBlocker 返回阻塞开始扫描的原因（空 = 可以开始）。
+// 仅 IPv6 校验时必须先确定「VPS 所在国家」这一发现源，且本机需要有 IPv6 出口。
+func StartBlocker(settings Settings, entries []EntryOption, probing bool) string {
+	if settings.DiscoveryKind() != DiscoveryCountryASN && probing {
+		return "正在探测入口 IP，请稍候再开始"
+	}
+	if !settings.VerifyByIPv6Only() {
+		return ""
+	}
+	if len(entries) == 0 {
+		// 尚未完成探测时不做判定，交给后续的扫描失败原因提示
+		return ""
+	}
+	if !HasUsableIPv6Egress(entries) {
+		return "本机 IPv6 出口不可用，无法按「仅 IPv6」校验域名；可按 r 重新探测，或改回 IPv4 / 双栈校验"
+	}
+	if settings.DiscoveryCountry(AutoDiscoveryCountry(entries)) == "" {
+		return "无法判定 VPS 所在国家（出口探测失败）：可按 r 重新探测，或回车手动填写国家/地区代码"
+	}
+	return ""
+}
+
 // shortError 压缩错误信息，避免 TUI 里单行过长
 func shortError(err error) string {
 	if err == nil {
